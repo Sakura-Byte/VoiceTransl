@@ -2,14 +2,14 @@
 
 ## 概述
 
-VoiceTransl Web API 提供了一个HTTP接口，用于音频转录和翻译服务。该API基于FastAPI框架构建，支持多种翻译提供商和语言。
+VoiceTransl Web API 提供了独立的HTTP接口，用于音频转录和文本翻译服务。该API基于FastAPI框架构建，支持多种翻译提供商和语言。
 
 ## 功能特性
 
 - 🎤 **音频转录**: 使用 litagin/anime-whisper 模型进行高质量音频转录
 - 🌍 **多语言支持**: 支持中文、英文、日文、韩文等多种语言
-- 🔄 **智能翻译**: 自动检测音频语言，根据需要进行翻译
-- 📝 **LRC字幕生成**: 生成标准LRC格式的字幕文件
+- 🔄 **独立翻译**: 单独的文本翻译端点，支持多种源语言和目标语言
+- 📝 **段落信息**: 提供详细的转录段落和时间戳信息
 - 🔧 **多翻译引擎**: 支持Sakura、GPT、Gemini、Ollama等多种翻译提供商
 
 ## 快速开始
@@ -60,12 +60,10 @@ python test_api.py http://localhost:8000
 
 ### 核心端点
 
-#### POST `/transcribe-translate` - 转录翻译
+#### POST `/transcribe` - 音频转录
 
 **请求参数:**
 - `audio_file` (file): 音频文件（支持常见音频格式）
-- `target_language` (string): 目标语言代码（如: zh-CN, en-US, ja-JP）
-- `provider` (string, 可选): 翻译提供商（默认: sakura）
 - `whisper_type` (string, 可选): Whisper引擎类型（默认: anime-whisper）
 - `whisper_model` (string, 可选): Whisper模型名称（默认: litagin/anime-whisper）
 
@@ -73,16 +71,66 @@ python test_api.py http://localhost:8000
 ```json
 {
     "success": true,
-    "message": "Processing completed successfully",
+    "message": "Transcription completed successfully",
     "detected_language": "ja-JP",
-    "target_language": "zh-CN",
-    "provider": "sakura",
     "whisper_type": "anime-whisper",
     "whisper_model": "litagin/anime-whisper",
-    "lrc_content": "[00:01.23]这是翻译后的文本",
-    "processing_time": 15.67
+    "transcription": "音频转录的文本内容",
+    "segments": [
+        {
+            "start": 0.0,
+            "end": 2.5,
+            "text": "第一段文本"
+        }
+    ],
+    "processing_time": 8.45
 }
 ```
+
+#### POST `/translate` - 文本翻译
+
+**请求参数 (JSON):**
+```json
+{
+    "text": "要翻译的文本",
+    "subtitle_content": "字幕文件内容（SRT或LRC格式）",
+    "input_format": "text",
+    "output_format": "text",
+    "source_language": "ja-JP",
+    "target_language": "zh-CN",
+    "provider": "sakura"
+}
+```
+
+**参数说明:**
+- `text` (string, 可选): 要翻译的纯文本内容（当input_format为text时使用）
+- `subtitle_content` (string, 可选): 字幕文件内容（当input_format为srt或lrc时使用）
+- `input_format` (string, 可选): 输入格式 - text/srt/lrc（默认: text）
+- `output_format` (string, 可选): 输出格式 - text/srt/lrc（默认: text）
+- `source_language` (string, 可选): 源语言代码，不指定则自动检测
+- `target_language` (string): 目标语言代码
+- `provider` (string, 可选): 翻译提供商（默认: sakura）
+
+**响应格式:**
+```json
+{
+    "success": true,
+    "message": "Translation completed successfully",
+    "source_language": "ja-JP",
+    "target_language": "zh-CN",
+    "provider": "sakura",
+    "input_format": "srt",
+    "output_format": "lrc",
+    "original_content": "原始内容",
+    "translated_content": "翻译后的内容",
+    "processing_time": 2.34
+}
+```
+
+**支持的输入/输出格式:**
+- **text**: 纯文本格式
+- **srt**: SRT字幕格式（包含时间戳）
+- **lrc**: LRC歌词格式（包含时间戳）
 
 ## 支持的语言
 
@@ -132,14 +180,38 @@ curl http://localhost:8000/health
 # 获取支持的语言
 curl http://localhost:8000/languages
 
-# 音频转录翻译
+# 音频转录
 curl -X POST \
-  http://localhost:8000/transcribe-translate \
+  http://localhost:8000/transcribe \
   -F "audio_file=@test.wav" \
-  -F "target_language=zh-CN" \
-  -F "provider=sakura" \
   -F "whisper_type=anime-whisper" \
   -F "whisper_model=litagin/anime-whisper"
+
+# 纯文本翻译
+curl -X POST \
+  http://localhost:8000/translate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "こんにちは",
+    "input_format": "text",
+    "output_format": "text",
+    "source_language": "ja-JP",
+    "target_language": "zh-CN",
+    "provider": "sakura"
+  }'
+
+# SRT字幕翻译为LRC格式
+curl -X POST \
+  http://localhost:8000/translate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "subtitle_content": "1\n00:00:01,000 --> 00:00:03,000\nこんにちは\n\n2\n00:00:04,000 --> 00:00:06,000\n元気ですか",
+    "input_format": "srt",
+    "output_format": "lrc",
+    "source_language": "ja-JP",
+    "target_language": "zh-CN",
+    "provider": "sakura"
+  }'
 
 # 获取可用的Whisper模型
 curl http://localhost:8000/whisper-models
@@ -154,25 +226,70 @@ import requests
 response = requests.get("http://localhost:8000/health")
 print(response.json())
 
-# 音频转录翻译
+# 音频转录
 with open("test.wav", "rb") as f:
     files = {"audio_file": f}
     data = {
-        "target_language": "zh-CN",
-        "provider": "sakura",
         "whisper_type": "anime-whisper",
         "whisper_model": "litagin/anime-whisper"
     }
     response = requests.post(
-        "http://localhost:8000/transcribe-translate",
+        "http://localhost:8000/transcribe",
         files=files,
         data=data
     )
     result = response.json()
     if result["success"]:
-        print("LRC内容:", result["lrc_content"])
+        print("转录文本:", result["transcription"])
+        print("检测语言:", result["detected_language"])
     else:
-        print("处理失败:", result["message"])
+        print("转录失败:", result["message"])
+
+# 纯文本翻译
+translation_data = {
+    "text": "こんにちは",
+    "input_format": "text",
+    "output_format": "text",
+    "source_language": "ja-JP",
+    "target_language": "zh-CN",
+    "provider": "sakura"
+}
+response = requests.post(
+    "http://localhost:8000/translate",
+    json=translation_data
+)
+result = response.json()
+if result["success"]:
+    print("翻译结果:", result["translated_content"])
+else:
+    print("翻译失败:", result["message"])
+
+# SRT字幕翻译为LRC格式
+srt_content = """1
+00:00:01,000 --> 00:00:03,000
+こんにちは
+
+2
+00:00:04,000 --> 00:00:06,000
+元気ですか"""
+
+subtitle_data = {
+    "subtitle_content": srt_content,
+    "input_format": "srt",
+    "output_format": "lrc",
+    "source_language": "ja-JP",
+    "target_language": "zh-CN",
+    "provider": "sakura"
+}
+response = requests.post(
+    "http://localhost:8000/translate",
+    json=subtitle_data
+)
+result = response.json()
+if result["success"]:
+    print("LRC字幕:", result["translated_content"])
+else:
+    print("翻译失败:", result["message"])
 ```
 
 ### JavaScript 示例
@@ -183,24 +300,79 @@ fetch('http://localhost:8000/health')
   .then(response => response.json())
   .then(data => console.log(data));
 
-// 音频转录翻译
+// 音频转录
 const formData = new FormData();
 formData.append('audio_file', audioFile);
-formData.append('target_language', 'zh-CN');
-formData.append('provider', 'sakura');
 formData.append('whisper_type', 'anime-whisper');
 formData.append('whisper_model', 'litagin/anime-whisper');
 
-fetch('http://localhost:8000/transcribe-translate', {
+fetch('http://localhost:8000/transcribe', {
   method: 'POST',
   body: formData
 })
 .then(response => response.json())
 .then(result => {
   if (result.success) {
-    console.log('LRC内容:', result.lrc_content);
+    console.log('转录文本:', result.transcription);
+    console.log('检测语言:', result.detected_language);
   } else {
-    console.error('处理失败:', result.message);
+    console.error('转录失败:', result.message);
+  }
+});
+
+// 纯文本翻译
+fetch('http://localhost:8000/translate', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    text: 'こんにちは',
+    input_format: 'text',
+    output_format: 'text',
+    source_language: 'ja-JP',
+    target_language: 'zh-CN',
+    provider: 'sakura'
+  })
+})
+.then(response => response.json())
+.then(result => {
+  if (result.success) {
+    console.log('翻译结果:', result.translated_content);
+  } else {
+    console.error('翻译失败:', result.message);
+  }
+});
+
+// SRT字幕翻译为LRC格式
+const srtContent = `1
+00:00:01,000 --> 00:00:03,000
+こんにちは
+
+2
+00:00:04,000 --> 00:00:06,000
+元気ですか`;
+
+fetch('http://localhost:8000/translate', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    subtitle_content: srtContent,
+    input_format: 'srt',
+    output_format: 'lrc',
+    source_language: 'ja-JP',
+    target_language: 'zh-CN',
+    provider: 'sakura'
+  })
+})
+.then(response => response.json())
+.then(result => {
+  if (result.success) {
+    console.log('LRC字幕:', result.translated_content);
+  } else {
+    console.error('翻译失败:', result.message);
   }
 });
 ```

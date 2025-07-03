@@ -2,10 +2,12 @@ import asyncio
 import os
 import tempfile
 import traceback
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from pathlib import Path
 import logging
 from datetime import datetime
+import re
+import json
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
@@ -16,6 +18,7 @@ from transformers import pipeline
 import librosa
 import subprocess
 import yaml
+import pysrt
 
 from GalTransl.ConfigHelper import CProjectConfig
 from GalTransl.Backend.SakuraTranslate import CSakuraTranslate
@@ -63,8 +66,6 @@ TRANSLATION_PROVIDERS = {
 }
 
 class TranscriptionRequest(BaseModel):
-    target_language: str
-    provider: Optional[str] = "sakura"
     whisper_type: Optional[str] = "anime-whisper"
     whisper_model: Optional[str] = "litagin/anime-whisper"
     generate_kwargs: Optional[Dict[str, Any]] = None
@@ -73,12 +74,33 @@ class TranscriptionResponse(BaseModel):
     success: bool
     message: str
     detected_language: Optional[str] = None
-    target_language: str
-    provider: str
     whisper_type: str
     whisper_model: str
-    lrc_content: Optional[str] = None
+    transcription: Optional[str] = None
+    segments: Optional[list] = None
     processing_time: float
+
+class TranslationRequest(BaseModel):
+    text: Optional[str] = None
+    subtitle_content: Optional[str] = None
+    input_format: Optional[str] = "text"  # text, srt, lrc
+    output_format: Optional[str] = "text"  # text, srt, lrc
+    source_language: Optional[str] = None
+    target_language: str
+    provider: Optional[str] = "sakura"
+
+class TranslationResponse(BaseModel):
+    success: bool
+    message: str
+    source_language: Optional[str] = None
+    target_language: str
+    provider: str
+    input_format: str
+    output_format: str
+    original_content: str
+    translated_content: Optional[str] = None
+    processing_time: float
+
 
 class APIManager:
     def __init__(self):
@@ -172,6 +194,139 @@ class APIManager:
             logger.error(f"Translation failed: {e}")
             return text
     
+    def parse_srt_content(self, srt_content: str) -> list:
+        """Parse SRT content and return list of subtitle segments"""
+        try:
+            srt_pattern = r'(\d+)\n([\d:,]+ --> [\d:,]+)\n(.+?)(?=\n\d+\n|\n*$)'
+            matches = re.findall(srt_pattern, srt_content, re.DOTALL)
+            
+            segments = []
+            for match in matches:
+                index, timing, text = match
+                start_time, end_time = timing.split(' --> ')
+                segments.append({
+                    'index': int(index),
+                    'start_time': start_time,
+                    'end_time': end_time,
+                    'text': text.strip()
+                })
+            return segments
+        except Exception as e:
+            logger.error(f"SRT parsing failed: {e}")
+            raise
+    
+    def parse_lrc_content(self, lrc_content: str) -> list:
+        """Parse LRC content and return list of subtitle segments"""
+        try:
+            lrc_pattern = r'\[(\d{2}:\d{2}\.\d{2,3})\](.+?)(?=\[|\Z)'
+            matches = re.findall(lrc_pattern, lrc_content, re.DOTALL)
+            
+            segments = []
+            for i, match in enumerate(matches):
+                timestamp, text = match
+                segments.append({
+                    'index': i + 1,
+                    'timestamp': timestamp,
+                    'text': text.strip()
+                })
+            return segments
+        except Exception as e:
+            logger.error(f"LRC parsing failed: {e}")
+            raise
+    
+    def format_srt_output(self, segments: list) -> str:
+        """Format segments as SRT content"""
+        try:
+            srt_lines = []
+            for segment in segments:
+                if 'start_time' in segment and 'end_time' in segment:
+                    # SRT format
+                    srt_lines.append(str(segment['index']))
+                    srt_lines.append(f"{segment['start_time']} --> {segment['end_time']}")
+                    srt_lines.append(segment['text'])
+                    srt_lines.append('')
+                else:
+                    # Convert from LRC format (approximate end time)
+                    srt_lines.append(str(segment['index']))
+                    start_time = self.lrc_to_srt_time(segment['timestamp'])
+                    # Approximate 3-second duration for each segment
+                    end_time = self.add_seconds_to_srt_time(start_time, 3.0)
+                    srt_lines.append(f"{start_time} --> {end_time}")
+                    srt_lines.append(segment['text'])
+                    srt_lines.append('')
+            return '\n'.join(srt_lines)
+        except Exception as e:
+            logger.error(f"SRT formatting failed: {e}")
+            raise
+    
+    def format_lrc_output(self, segments: list) -> str:
+        """Format segments as LRC content"""
+        try:
+            lrc_lines = []
+            for segment in segments:
+                if 'timestamp' in segment:
+                    # LRC format
+                    lrc_lines.append(f"[{segment['timestamp']}]{segment['text']}")
+                else:
+                    # Convert from SRT format
+                    timestamp = self.srt_to_lrc_time(segment['start_time'])
+                    lrc_lines.append(f"[{timestamp}]{segment['text']}")
+            return '\n'.join(lrc_lines)
+        except Exception as e:
+            logger.error(f"LRC formatting failed: {e}")
+            raise
+    
+    def lrc_to_srt_time(self, lrc_time: str) -> str:
+        """Convert LRC timestamp (MM:SS.mmm) to SRT format (HH:MM:SS,mmm)"""
+        try:
+            if '.' in lrc_time:
+                minutes, seconds_ms = lrc_time.split(':')
+                seconds, ms = seconds_ms.split('.')
+            else:
+                minutes, seconds = lrc_time.split(':')
+                ms = '000'
+            
+            # Pad milliseconds to 3 digits
+            ms = ms.ljust(3, '0')[:3]
+            
+            return f"00:{minutes.zfill(2)}:{seconds.zfill(2)},{ms}"
+        except Exception as e:
+            logger.error(f"LRC to SRT time conversion failed: {e}")
+            return "00:00:00,000"
+    
+    def srt_to_lrc_time(self, srt_time: str) -> str:
+        """Convert SRT timestamp (HH:MM:SS,mmm) to LRC format (MM:SS.mmm)"""
+        try:
+            time_part = srt_time.replace(',', '.')
+            hours, minutes, seconds_ms = time_part.split(':')
+            
+            # Convert hours to minutes
+            total_minutes = int(hours) * 60 + int(minutes)
+            
+            return f"{total_minutes:02d}:{seconds_ms}"
+        except Exception as e:
+            logger.error(f"SRT to LRC time conversion failed: {e}")
+            return "00:00.000"
+    
+    def add_seconds_to_srt_time(self, srt_time: str, duration: float) -> str:
+        """Add duration in seconds to SRT timestamp"""
+        try:
+            time_part, ms_part = srt_time.split(',')
+            hours, minutes, seconds = map(int, time_part.split(':'))
+            ms = int(ms_part)
+            
+            total_seconds = hours * 3600 + minutes * 60 + seconds + ms / 1000.0 + duration
+            
+            new_hours = int(total_seconds // 3600)
+            new_minutes = int((total_seconds % 3600) // 60)
+            new_seconds = int(total_seconds % 60)
+            new_ms = int((total_seconds % 1) * 1000)
+            
+            return f"{new_hours:02d}:{new_minutes:02d}:{new_seconds:02d},{new_ms:03d}"
+        except Exception as e:
+            logger.error(f"SRT time addition failed: {e}")
+            return srt_time
+
     def generate_lrc(self, transcription_result: Dict[str, Any], translated_text: str = None) -> str:
         try:
             # Use the unified whisper handler's LRC generation
@@ -225,11 +380,9 @@ async def get_whisper_models():
         logger.error(f"Failed to get whisper models: {e}")
         return {"error": str(e)}
 
-@app.post("/transcribe-translate", response_model=TranscriptionResponse)
-async def transcribe_translate(
+@app.post("/transcribe", response_model=TranscriptionResponse)
+async def transcribe(
     audio_file: UploadFile = File(...),
-    target_language: str = Form(...),
-    provider: str = Form("sakura"),
     whisper_type: str = Form("anime-whisper"),
     whisper_model: str = Form("litagin/anime-whisper"),
     background_tasks: BackgroundTasks = BackgroundTasks()
@@ -238,18 +391,6 @@ async def transcribe_translate(
     temp_audio_path = None
     
     try:
-        if target_language not in SUPPORTED_LANGUAGES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported target language: {target_language}"
-            )
-        
-        if provider not in TRANSLATION_PROVIDERS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported provider: {provider}"
-            )
-        
         if not audio_file.content_type.startswith("audio/"):
             raise HTTPException(
                 status_code=400,
@@ -276,37 +417,23 @@ async def transcribe_translate(
         detected_language = lang_map.get(detected_language, f"{detected_language}-XX")
         logger.info(f"Detected language: {detected_language}")
         
-        original_text = transcription_result["text"]
-        
-        translated_text = None
-        if api_manager.should_translate(detected_language, target_language):
-            logger.info(f"Translating from {detected_language} to {target_language}")
-            translated_text = await api_manager.translate_text(
-                original_text, detected_language, target_language, provider
-            )
-        else:
-            logger.info(f"Skipping translation - detected language ({detected_language}) matches target language ({target_language})")
-        
-        lrc_content = api_manager.generate_lrc(transcription_result, translated_text)
-        
         processing_time = (datetime.now() - start_time).total_seconds()
         
         background_tasks.add_task(cleanup_temp_file, temp_audio_path)
         
         return TranscriptionResponse(
             success=True,
-            message="Processing completed successfully",
+            message="Transcription completed successfully",
             detected_language=detected_language,
-            target_language=target_language,
-            provider=provider,
             whisper_type=whisper_type,
             whisper_model=whisper_model,
-            lrc_content=lrc_content,
+            transcription=transcription_result["text"],
+            segments=transcription_result.get("segments", []),
             processing_time=processing_time
         )
         
     except Exception as e:
-        logger.error(f"Processing failed: {e}")
+        logger.error(f"Transcription failed: {e}")
         traceback.print_exc()
         
         if temp_audio_path:
@@ -314,15 +441,124 @@ async def transcribe_translate(
         
         return TranscriptionResponse(
             success=False,
-            message=f"Processing failed: {str(e)}",
+            message=f"Transcription failed: {str(e)}",
             detected_language=None,
-            target_language=target_language,
-            provider=provider,
             whisper_type=whisper_type,
             whisper_model=whisper_model,
-            lrc_content=None,
+            transcription=None,
+            segments=None,
             processing_time=(datetime.now() - start_time).total_seconds()
         )
+
+@app.post("/translate", response_model=TranslationResponse)
+async def translate(request: TranslationRequest):
+    start_time = datetime.now()
+    
+    try:
+        if request.target_language not in SUPPORTED_LANGUAGES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported target language: {request.target_language}"
+            )
+        
+        if request.provider not in TRANSLATION_PROVIDERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported provider: {request.provider}"
+            )
+        
+        # Validate input format and content
+        if request.input_format not in ["text", "srt", "lrc"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported input format: {request.input_format}"
+            )
+            
+        if request.output_format not in ["text", "srt", "lrc"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported output format: {request.output_format}"
+            )
+        
+        # Get input content
+        if request.input_format == "text":
+            if not request.text:
+                raise HTTPException(status_code=400, detail="Text content is required for text input format")
+            original_content = request.text
+            input_segments = [{"index": 1, "text": request.text}]
+        else:
+            if not request.subtitle_content:
+                raise HTTPException(status_code=400, detail="Subtitle content is required for SRT/LRC input format")
+            original_content = request.subtitle_content
+            
+            if request.input_format == "srt":
+                input_segments = api_manager.parse_srt_content(request.subtitle_content)
+            else:  # lrc
+                input_segments = api_manager.parse_lrc_content(request.subtitle_content)
+        
+        source_language = request.source_language or "auto"
+        
+        # Translate each segment
+        translated_segments = []
+        for segment in input_segments:
+            text_to_translate = segment['text']
+            
+            # Check if translation is needed
+            if (request.source_language and 
+                not api_manager.should_translate(request.source_language, request.target_language)):
+                translated_text = text_to_translate
+                logger.info(f"Skipping translation - source language ({request.source_language}) matches target language ({request.target_language})")
+            else:
+                logger.info(f"Translating segment from {source_language} to {request.target_language}")
+                translated_text = await api_manager.translate_text(
+                    text_to_translate, source_language, request.target_language, request.provider
+                )
+            
+            # Create translated segment preserving timing information
+            translated_segment = segment.copy()
+            translated_segment['text'] = translated_text
+            translated_segments.append(translated_segment)
+        
+        # Format output based on requested format
+        if request.output_format == "text":
+            translated_content = '\n'.join([seg['text'] for seg in translated_segments])
+        elif request.output_format == "srt":
+            translated_content = api_manager.format_srt_output(translated_segments)
+        else:  # lrc
+            translated_content = api_manager.format_lrc_output(translated_segments)
+        
+        processing_time = (datetime.now() - start_time).total_seconds()
+        
+        return TranslationResponse(
+            success=True,
+            message="Translation completed successfully",
+            source_language=request.source_language,
+            target_language=request.target_language,
+            provider=request.provider,
+            input_format=request.input_format,
+            output_format=request.output_format,
+            original_content=original_content,
+            translated_content=translated_content,
+            processing_time=processing_time
+        )
+        
+    except Exception as e:
+        logger.error(f"Translation failed: {e}")
+        traceback.print_exc()
+        
+        return TranslationResponse(
+            success=False,
+            message=f"Translation failed: {str(e)}",
+            source_language=request.source_language,
+            target_language=request.target_language,
+            provider=request.provider,
+            input_format=request.input_format or "text",
+            output_format=request.output_format or "text",
+            original_content=request.text or request.subtitle_content or "",
+            translated_content=None,
+            processing_time=(datetime.now() - start_time).total_seconds()
+        )
+
 
 def cleanup_temp_file(file_path: str):
     try:
