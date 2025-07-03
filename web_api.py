@@ -100,34 +100,6 @@ class APIManager:
             logger.error(f"Failed to load configuration: {e}")
             self.config = None
     
-    def detect_language(self, audio_path: str, whisper_type: str = "anime-whisper", whisper_model: str = "litagin/anime-whisper") -> str:
-        try:
-            # Initialize whisper if needed
-            if not self.whisper_handler.whisper_type:
-                success = self.whisper_handler.initialize_model(whisper_type, whisper_model)
-                if not success:
-                    logger.error("Failed to initialize whisper model for language detection")
-                    return "en-US"
-            
-            # Transcribe for language detection
-            result = self.whisper_handler.transcribe(audio_path, language='auto')
-            
-            if result.get('success', False):
-                detected_lang = result.get('language', 'en')
-                # Convert to full language code
-                lang_map = {
-                    'zh': 'zh-CN',
-                    'ja': 'ja-JP', 
-                    'en': 'en-US',
-                    'ko': 'ko-KR'
-                }
-                return lang_map.get(detected_lang, f"{detected_lang}-XX")
-            else:
-                return "en-US"
-                
-        except Exception as e:
-            logger.error(f"Language detection failed: {e}")
-            return "en-US"
     
     def transcribe_audio(self, audio_path: str, whisper_type: str = "anime-whisper", whisper_model: str = "litagin/anime-whisper", language: str = None, **kwargs) -> Dict[str, Any]:
         try:
@@ -289,14 +261,21 @@ async def transcribe_translate(
             content = await audio_file.read()
             temp_file.write(content)
         
-        detected_language = api_manager.detect_language(temp_audio_path, whisper_type, whisper_model)
-        logger.info(f"Detected language: {detected_language}")
-        
-        transcription_result = api_manager.transcribe_audio(temp_audio_path, whisper_type, whisper_model, detected_language)
+        transcription_result = api_manager.transcribe_audio(temp_audio_path, whisper_type, whisper_model, language=None)
         
         if not transcription_result.get('success', False):
             raise RuntimeError(f"Transcription failed: {transcription_result.get('error', 'Unknown error')}")
-            
+        
+        detected_language = transcription_result.get('language', 'en')
+        lang_map = {
+            'zh': 'zh-CN',
+            'ja': 'ja-JP', 
+            'en': 'en-US',
+            'ko': 'ko-KR'
+        }
+        detected_language = lang_map.get(detected_language, f"{detected_language}-XX")
+        logger.info(f"Detected language: {detected_language}")
+        
         original_text = transcription_result["text"]
         
         translated_text = None
