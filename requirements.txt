@@ -16,3 +16,11 @@ bilibili-dl
 PyQt-Fluent-Widgets
 pyinstaller
 openai
+fastapi
+uvicorn[standard]
+python-multipart
+transformers
+torch
+librosa
+pydantic
+faster-whisper

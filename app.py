@@ -82,6 +82,7 @@ class MainWindow(QMainWindow):
         self.initLogTab()
         self.initSettingsTab()
         self.initAdvancedSettingTab()
+        self.initWebAPITab()
         self.initDictTab()
         self.initToolTab()
         self.initSummarizeTab()
@@ -90,7 +91,24 @@ class MainWindow(QMainWindow):
         if os.path.exists('config.txt'):
             with open('config.txt', 'r', encoding='utf-8') as f:
                 lines = f.readlines()
+                # Legacy compatibility: try to parse old whisper_file format
                 whisper_file = lines[0].strip()
+                if '/' in whisper_file or whisper_file.startswith('ggml'):
+                    # Old format, convert to new format
+                    if whisper_file.startswith('ggml'):
+                        whisper_type = 'whisper-cpp'
+                        whisper_model = whisper_file
+                    elif 'faster-whisper' in whisper_file:
+                        whisper_type = 'faster-whisper'
+                        whisper_model = whisper_file
+                    else:
+                        whisper_type = 'anime-whisper'
+                        whisper_model = 'litagin/anime-whisper'
+                else:
+                    # New format - assume it's whisper type
+                    whisper_type = whisper_file if whisper_file in ['whisper-cpp', 'faster-whisper', 'anime-whisper'] else 'anime-whisper'
+                    whisper_model = 'litagin/anime-whisper' if whisper_type == 'anime-whisper' else ''
+                
                 translator = lines[1].strip()
                 language = lines[2].strip()
                 gpt_token = lines[3].strip()
@@ -102,8 +120,36 @@ class MainWindow(QMainWindow):
                 summary_address = lines[9].strip()
                 summary_model = lines[10].strip()
                 summary_token = lines[11].strip()
+                
+                # Try to read new whisper model from extended config
+                if len(lines) > 19:
+                    whisper_model = lines[19].strip()
+                
+                # Web API configuration (new)
+                if len(lines) > 12:
+                    webapi_enabled = lines[12].strip()
+                    webapi_port = lines[13].strip()
+                    webapi_host = lines[14].strip()
+                    webapi_default_provider = lines[15].strip()
+                    webapi_languages = lines[16].strip()
+                    webapi_api_key = lines[17].strip()
+                    webapi_max_file_size = lines[18].strip()
+                else:
+                    # Default values for Web API
+                    webapi_enabled = "禁用"
+                    webapi_port = "8000"
+                    webapi_host = "0.0.0.0"
+                    webapi_default_provider = "sakura"
+                    webapi_languages = "zh-CN,en-US,ja-JP,ko-KR,es-ES,fr-FR,de-DE,it-IT,pt-BR,ru-RU,ar-SA,th-TH,vi-VN"
+                    webapi_api_key = ""
+                    webapi_max_file_size = "100"
 
-                if self.whisper_file: self.whisper_file.setCurrentText(whisper_file)
+                # Set whisper configuration
+                self.whisper_type.setCurrentText(whisper_type)
+                self.on_whisper_type_changed(whisper_type)  # Load models for this type
+                if whisper_model and self.whisper_model.findText(whisper_model) >= 0:
+                    self.whisper_model.setCurrentText(whisper_model)
+                
                 self.translator_group.setCurrentText(translator)
                 self.input_lang.setCurrentText(language)
                 self.gpt_token.setText(gpt_token)
@@ -115,6 +161,15 @@ class MainWindow(QMainWindow):
                 self.summarize_address.setText(summary_address)
                 self.summarize_model.setText(summary_model)
                 self.summarize_token.setText(summary_token)
+                
+                # Set Web API configuration
+                self.webapi_enabled.setCurrentText(webapi_enabled)
+                self.webapi_port.setText(webapi_port)
+                self.webapi_host.setText(webapi_host)
+                self.webapi_default_provider.setCurrentText(webapi_default_provider)
+                self.webapi_languages.setText(webapi_languages)
+                self.webapi_api_key.setText(webapi_api_key)
+                self.webapi_max_file_size.setText(webapi_max_file_size)
 
         if os.path.exists('whisper/param.txt'):
             with open('whisper/param.txt', 'r', encoding='utf-8') as f:
@@ -341,11 +396,15 @@ B站教程：https://space.bilibili.com/36464441/lists/3239068。
         self.settings_layout = self.settings_tab.vBoxLayout
         
         # Whisper Section
-        self.settings_layout.addWidget(BodyLabel("🗣️ 选择用于语音识别的模型文件。"))
-        self.whisper_file = QComboBox()
-        whisper_lst = [i for i in os.listdir('whisper') if i.startswith('ggml') and i.endswith('bin')] + [i for i in os.listdir('whisper-faster') if i.startswith('faster-whisper')] + ['不进行听写']
-        self.whisper_file.addItems(whisper_lst)
-        self.settings_layout.addWidget(self.whisper_file)
+        self.settings_layout.addWidget(BodyLabel("🗣️ 选择Whisper引擎类型"))
+        self.whisper_type = QComboBox()
+        self.whisper_type.addItems(['whisper-cpp', 'faster-whisper', 'anime-whisper'])
+        self.whisper_type.currentTextChanged.connect(self.on_whisper_type_changed)
+        self.settings_layout.addWidget(self.whisper_type)
+        
+        self.settings_layout.addWidget(BodyLabel("🗣️ 选择Whisper模型"))
+        self.whisper_model = QComboBox()
+        self.settings_layout.addWidget(self.whisper_model)
 
         self.settings_layout.addWidget(BodyLabel("🌍 选择输入的语言。(ja=日语，en=英语，ko=韩语，ru=俄语，fr=法语，zh=中文，仅听写）"))
         self.input_lang = QComboBox()
@@ -402,6 +461,33 @@ B站教程：https://space.bilibili.com/36464441/lists/3239068。
         self.settings_layout.addWidget(self.open_model_dir)
 
         self.addSubInterface(self.settings_tab, FluentIcon.SETTING, "基础设置", NavigationItemPosition.TOP)
+        
+        # Initialize whisper models
+        self.init_whisper_models()
+
+    def on_whisper_type_changed(self, whisper_type: str):
+        """当Whisper类型改变时更新模型列表"""
+        self.whisper_model.clear()
+        
+        try:
+            from whisper_handler import get_whisper_handler
+            handler = get_whisper_handler()
+            available_models = handler.get_available_models()
+            
+            if whisper_type in available_models:
+                models = available_models[whisper_type]
+                if models:
+                    self.whisper_model.addItems(models)
+                else:
+                    self.whisper_model.addItem("无可用模型")
+        except Exception as e:
+            print(f"Failed to load whisper models: {e}")
+            self.whisper_model.addItem("加载失败")
+    
+    def init_whisper_models(self):
+        """初始化Whisper模型列表"""
+        current_type = self.whisper_type.currentText()
+        self.on_whisper_type_changed(current_type)
 
     def initAdvancedSettingTab(self):
         self.advanced_settings_tab = Widget("AdvancedSettings", self)
@@ -423,6 +509,80 @@ B站教程：https://space.bilibili.com/36464441/lists/3239068。
         self.advanced_settings_layout.addWidget(self.param_llama)
 
         self.addSubInterface(self.advanced_settings_tab, FluentIcon.COMMAND_PROMPT, "命令参数", NavigationItemPosition.TOP)
+
+    def initWebAPITab(self):
+        self.webapi_tab = Widget("WebAPI", self)
+        self.webapi_layout = self.webapi_tab.vBoxLayout
+        
+        # Web API Enable/Disable
+        self.webapi_layout.addWidget(BodyLabel("🌐 启用Web API服务"))
+        self.webapi_enabled = QComboBox()
+        self.webapi_enabled.addItems(['禁用', '启用'])
+        self.webapi_layout.addWidget(self.webapi_enabled)
+        
+        # Port Configuration
+        self.webapi_layout.addWidget(BodyLabel("🔌 Web API端口"))
+        self.webapi_port = QLineEdit()
+        self.webapi_port.setPlaceholderText("8000")
+        self.webapi_port.setText("8000")
+        self.webapi_layout.addWidget(self.webapi_port)
+        
+        # Host Configuration
+        self.webapi_layout.addWidget(BodyLabel("🏠 Web API主机地址"))
+        self.webapi_host = QLineEdit()
+        self.webapi_host.setPlaceholderText("0.0.0.0")
+        self.webapi_host.setText("0.0.0.0")
+        self.webapi_layout.addWidget(self.webapi_host)
+        
+        # Default Translation Provider
+        self.webapi_layout.addWidget(BodyLabel("🔄 默认翻译提供商"))
+        self.webapi_default_provider = QComboBox()
+        self.webapi_default_provider.addItems(['sakura', 'gpt3', 'gpt4', 'gemini', 'ollama'])
+        self.webapi_layout.addWidget(self.webapi_default_provider)
+        
+        # Supported Languages
+        self.webapi_layout.addWidget(BodyLabel("🌍 支持的语言"))
+        self.webapi_languages = QTextEdit()
+        self.webapi_languages.setPlaceholderText("zh-CN,en-US,ja-JP,ko-KR,es-ES,fr-FR,de-DE,it-IT,pt-BR,ru-RU,ar-SA,th-TH,vi-VN")
+        self.webapi_languages.setText("zh-CN,en-US,ja-JP,ko-KR,es-ES,fr-FR,de-DE,it-IT,pt-BR,ru-RU,ar-SA,th-TH,vi-VN")
+        self.webapi_layout.addWidget(self.webapi_languages)
+        
+        # API Key for Authentication (Optional)
+        self.webapi_layout.addWidget(BodyLabel("🔐 API密钥 (可选)"))
+        self.webapi_api_key = QLineEdit()
+        self.webapi_api_key.setPlaceholderText("留空表示不需要认证")
+        self.webapi_layout.addWidget(self.webapi_api_key)
+        
+        # Max File Size
+        self.webapi_layout.addWidget(BodyLabel("📁 最大文件大小 (MB)"))
+        self.webapi_max_file_size = QLineEdit()
+        self.webapi_max_file_size.setPlaceholderText("100")
+        self.webapi_max_file_size.setText("100")
+        self.webapi_layout.addWidget(self.webapi_max_file_size)
+        
+        # Control Buttons
+        self.start_api_btn = QPushButton("🚀 启动Web API")
+        self.start_api_btn.clicked.connect(self.start_web_api)
+        self.webapi_layout.addWidget(self.start_api_btn)
+        
+        self.stop_api_btn = QPushButton("🛑 停止Web API")
+        self.stop_api_btn.clicked.connect(self.stop_web_api)
+        self.stop_api_btn.setEnabled(False)
+        self.webapi_layout.addWidget(self.stop_api_btn)
+        
+        # Status Display
+        self.webapi_status = BodyLabel("状态: 未启动")
+        self.webapi_layout.addWidget(self.webapi_status)
+        
+        # Test API Button
+        self.test_api_btn = QPushButton("🧪 测试API")
+        self.test_api_btn.clicked.connect(self.test_web_api)
+        self.webapi_layout.addWidget(self.test_api_btn)
+        
+        self.addSubInterface(self.webapi_tab, FluentIcon.GLOBE, "Web API", NavigationItemPosition.TOP)
+        
+        # Web API process
+        self.webapi_process = None
 
     def initToolTab(self):
         self.tool_tab = Widget("Tool", self)
@@ -565,6 +725,97 @@ B站教程：https://space.bilibili.com/36464441/lists/3239068。
         if os.path.exists('project/cache'):
             shutil.rmtree('project/cache')
         os.makedirs('project/cache', exist_ok=True)
+    
+    def start_web_api(self):
+        """启动Web API服务"""
+        try:
+            if self.webapi_process is not None:
+                self.webapi_status.setText("状态: 已在运行")
+                return
+                
+            port = self.webapi_port.text() or "8000"
+            host = self.webapi_host.text() or "0.0.0.0"
+            
+            self.webapi_status.setText(f"状态: 正在启动... ({host}:{port})")
+            self.start_api_btn.setEnabled(False)
+            self.stop_api_btn.setEnabled(True)
+            
+            # 保存配置
+            self.thread = QThread()
+            self.worker = MainWorker(self)
+            self.worker.moveToThread(self.thread)
+            self.thread.started.connect(self.worker.save_config)
+            self.worker.finished.connect(self.thread.quit)
+            self.thread.start()
+            
+            # 启动Web API服务进程
+            import sys
+            python_exe = sys.executable
+            web_api_cmd = [
+                python_exe, "web_api.py",
+                "--host", host,
+                "--port", port
+            ]
+            
+            self.webapi_process = subprocess.Popen(
+                web_api_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=os.getcwd()
+            )
+            
+            # 等待一下确保服务启动
+            sleep(2)
+            
+            if self.webapi_process.poll() is None:
+                self.webapi_status.setText(f"状态: 已启动 ({host}:{port})")
+            else:
+                self.webapi_status.setText("状态: 启动失败 - 进程意外退出")
+                self.start_api_btn.setEnabled(True)
+                self.stop_api_btn.setEnabled(False)
+                self.webapi_process = None
+            
+        except Exception as e:
+            self.webapi_status.setText(f"状态: 启动失败 - {str(e)}")
+            self.start_api_btn.setEnabled(True)
+            self.stop_api_btn.setEnabled(False)
+            self.webapi_process = None
+    
+    def stop_web_api(self):
+        """停止Web API服务"""
+        try:
+            if self.webapi_process is not None:
+                self.webapi_process.terminate()
+                self.webapi_process = None
+                
+            self.webapi_status.setText("状态: 已停止")
+            self.start_api_btn.setEnabled(True)
+            self.stop_api_btn.setEnabled(False)
+            
+        except Exception as e:
+            self.webapi_status.setText(f"状态: 停止失败 - {str(e)}")
+    
+    def test_web_api(self):
+        """测试Web API连接"""
+        try:
+            port = self.webapi_port.text() or "8000"
+            host = self.webapi_host.text() or "localhost"
+            
+            # 构建测试URL
+            test_url = f"http://{host}:{port}/health"
+            
+            # 发送测试请求
+            response = requests.get(test_url, timeout=5)
+            
+            if response.status_code == 200:
+                self.webapi_status.setText("状态: 测试成功 - API正常运行")
+            else:
+                self.webapi_status.setText(f"状态: 测试失败 - HTTP {response.status_code}")
+                
+        except requests.exceptions.RequestException as e:
+            self.webapi_status.setText(f"状态: 测试失败 - {str(e)}")
+        except Exception as e:
+            self.webapi_status.setText(f"状态: 测试失败 - {str(e)}")
 
 def error_handler(func):
     def wrapper(self):
@@ -581,11 +832,50 @@ class MainWorker(QObject):
         super().__init__()
         self.master = master
         self.status = master.status
+    
+    def write_srt_file(self, transcription_result, srt_file_path):
+        """将转录结果写入SRT文件"""
+        try:
+            segments = transcription_result.get('segments', [])
+            if not segments:
+                # 如果没有分段，创建单个分段
+                text = transcription_result.get('text', '')
+                if text:
+                    segments = [{'start': 0, 'end': 10, 'text': text}]
+            
+            with open(srt_file_path, 'w', encoding='utf-8') as f:
+                for i, segment in enumerate(segments, 1):
+                    start_time = self.format_srt_time(segment.get('start', 0))
+                    end_time = self.format_srt_time(segment.get('end', segment.get('start', 0) + 5))
+                    text = segment.get('text', '').strip()
+                    
+                    if text:
+                        f.write(f"{i}\n")
+                        f.write(f"{start_time} --> {end_time}\n")
+                        f.write(f"{text}\n\n")
+                        
+        except Exception as e:
+            print(f"写入SRT文件失败: {e}")
+            # 创建一个基本的SRT文件
+            with open(srt_file_path, 'w', encoding='utf-8') as f:
+                text = transcription_result.get('text', '转录失败')
+                f.write("1\n00:00:00,000 --> 00:00:10,000\n{}\n\n".format(text))
+    
+    def format_srt_time(self, seconds):
+        """将秒数转换为SRT时间格式"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        millisecs = int((seconds % 1) * 1000)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millisecs:03d}"
 
     @error_handler
     def save_config(self):
         self.status.emit("[INFO] 正在读取配置...")
-        whisper_file = self.master.whisper_file.currentText()
+        # New whisper configuration
+        whisper_type = self.master.whisper_type.currentText()
+        whisper_model = self.master.whisper_model.currentText()
+        
         translator = self.master.translator_group.currentText()
         language = self.master.input_lang.currentText()
         gpt_token = self.master.gpt_token.text()
@@ -597,10 +887,19 @@ class MainWorker(QObject):
         summary_address = self.master.summarize_address.text()
         summary_model = self.master.summarize_model.text()
         summary_token = self.master.summarize_token.text()
+        
+        # Web API configuration
+        webapi_enabled = self.master.webapi_enabled.currentText()
+        webapi_port = self.master.webapi_port.text()
+        webapi_host = self.master.webapi_host.text()
+        webapi_default_provider = self.master.webapi_default_provider.currentText()
+        webapi_languages = self.master.webapi_languages.toPlainText()
+        webapi_api_key = self.master.webapi_api_key.text()
+        webapi_max_file_size = self.master.webapi_max_file_size.text()
 
-        # save config
+        # save config - maintain backward compatibility by putting whisper_type in line 0
         with open('config.txt', 'w', encoding='utf-8') as f:
-            f.write(f"{whisper_file}\n{translator}\n{language}\n{gpt_token}\n{gpt_address}\n{gpt_model}\n{sakura_file}\n{sakura_mode}\n{proxy_address}\n{summary_address}\n{summary_model}\n{summary_token}\n")
+            f.write(f"{whisper_type}\n{translator}\n{language}\n{gpt_token}\n{gpt_address}\n{gpt_model}\n{sakura_file}\n{sakura_mode}\n{proxy_address}\n{summary_address}\n{summary_model}\n{summary_token}\n{webapi_enabled}\n{webapi_port}\n{webapi_host}\n{webapi_default_provider}\n{webapi_languages}\n{webapi_api_key}\n{webapi_max_file_size}\n{whisper_model}\n")
 
         # save whisper param
         with open('whisper/param.txt', 'w', encoding='utf-8') as f:
@@ -732,7 +1031,8 @@ class MainWorker(QObject):
         self.save_config()
         input_files = self.master.input_files_list.toPlainText()
         yt_url = self.master.yt_url.toPlainText()
-        whisper_file = self.master.whisper_file.currentText()
+        whisper_type = self.master.whisper_type.currentText()
+        whisper_model = self.master.whisper_model.currentText()
         translator = self.master.translator_group.currentText()
         language = self.master.input_lang.currentText()
         gpt_token = self.master.gpt_token.text()
@@ -870,44 +1170,51 @@ class MainWorker(QObject):
                 self.status.emit("[INFO] 字幕转换完成！")
                 input_file = input_file[:-4]
             else:
-                if whisper_file == '不进行听写':
-                    self.status.emit("[INFO] 不进行听写，跳过听写步骤...")
+                # 使用统一的Whisper处理器进行音频转录
+                # 导入统一的Whisper处理器
+                try:
+                    from whisper_handler import get_whisper_handler
+                    whisper_handler = get_whisper_handler()
+                    
+                    self.status.emit(f"[INFO] 正在初始化{whisper_type}模型: {whisper_model}...")
+                    
+                    # 初始化模型
+                    success = whisper_handler.initialize_model(whisper_type, whisper_model)
+                    if not success:
+                        self.status.emit(f"[ERROR] 初始化{whisper_type}模型失败！")
+                        continue
+                    
+                    self.status.emit("[INFO] 正在进行语音识别...")
+                    
+                    # 使用统一接口进行转录
+                    result = whisper_handler.transcribe(input_file, language=language)
+                    
+                    if not result.get('success', False):
+                        self.status.emit(f"[ERROR] 语音识别失败: {result.get('error', '未知错误')}")
+                        continue
+                    
+                    # 生成SRT文件以兼容现有流程
+                    input_file_base = os.path.splitext(input_file)[0]
+                    srt_file = input_file_base + '.srt'
+                    
+                    # 将转录结果转换为SRT格式
+                    self.write_srt_file(result, srt_file)
+                    
+                    # 转换为JSON格式用于翻译
+                    output_file_path = os.path.join('project/gt_input', os.path.basename(input_file_base)+'.json')
+                    make_prompt(srt_file, output_file_path)
+                    
+                    # 更新input_file为处理后的文件名（无扩展名）
+                    input_file = input_file_base
+                    
+                    self.status.emit("[INFO] 语音识别完成！")
+                    
+                except Exception as e:
+                    self.status.emit(f"[ERROR] 语音识别过程出错: {str(e)}")
+                    print(f"Whisper处理错误: {e}")
+                    import traceback
+                    traceback.print_exc()
                     continue
-
-                wav_file = '.'.join(input_file.split('.')[:-1]) + '.wav'
-
-                self.status.emit("[INFO] 正在进行音频提取...")
-                self.pid = subprocess.Popen(['ffmpeg', '-y', '-i', input_file, '-acodec', 'pcm_s16le', '-ac', '1', '-ar', '16000', wav_file], stdout=sys.stdout, stderr=sys.stdout, creationflags=0x08000000)
-                self.pid.wait()
-                self.pid.kill()
-                self.pid.terminate()
-
-                if not os.path.exists(wav_file):
-                    self.status.emit("[ERROR] 音频提取失败，请检查文件格式！")
-                    break
-
-                input_file = wav_file[:-4]
-                self.status.emit("[INFO] 正在进行语音识别...")
-
-                if whisper_file.startswith('ggml'):
-                    print(param_whisper)
-                    self.pid = subprocess.Popen([param.replace('$whisper_file',whisper_file).replace('$input_file',input_file).replace('$language',language) for param in param_whisper.split()], stdout=sys.stdout, stderr=sys.stdout, creationflags=0x08000000)
-                elif whisper_file.startswith('faster-whisper'):
-                    print(param_whisper_faster)
-                    self.pid = subprocess.Popen([param.replace('$whisper_file',whisper_file[15:]).replace('$input_file',input_file).replace('$language',language).replace('$output_dir',os.path.dirname(input_file)) for param in param_whisper_faster.split()], stdout=sys.stdout, stderr=sys.stdout, creationflags=0x08000000)
-                else:
-                    self.status.emit("[INFO] 不进行听写，跳过听写步骤...")
-                    continue
-                self.pid.wait()
-                self.pid.kill()
-                self.pid.terminate()
-
-                if os.path.exists(wav_file):
-                    os.remove(wav_file)
-
-                output_file_path = os.path.join('project/gt_input', os.path.basename(input_file)+'.json')
-                make_prompt(input_file+'.srt', output_file_path)
-                self.status.emit("[INFO] 语音识别完成！")
 
             if translator == '不进行翻译':
                 self.status.emit("[INFO] 翻译器未选择，跳过翻译步骤...")
