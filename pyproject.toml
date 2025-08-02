@@ -1,0 +1,48 @@
+[project]
+name = "voicetransl"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate>=1.9.0",
+    "colorlog>=6.9.0",
+    "google-genai>=1.2.0",
+    "gradio>=5.39.0",
+    "httpx<0.28",
+    "huggingface-hub>=0.34.3",
+    "librosa>=0.11.0",
+    "mutagen>=1.47.0",
+    "openai>=1.98.0",
+    "opencc>=1.1.9",
+    "packaging>=25.0",
+    "prompt-toolkit>=3.0.51",
+    "pydub>=0.25.1",
+    "pyinstaller>=6.14.2",
+    "pyqt6-fluent-widgets[full]>=1.8.4",
+    "pysrt>=1.1.2",
+    "pyyaml>=6.0.2",
+    "requests>=2.32.4",
+    "sentencepiece>=0.2.0",
+    "soundfile>=0.13.1",
+    "tenacity>=9.1.2",
+    "tiktoken>=0.9.0",
+    "torch>=2.7.1",
+    "torchaudio>=2.7.1",
+    "torchvision>=0.22.1",
+    "tqdm>=4.67.1",
+    "transformers>=4.54.1",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://mirrors.nju.edu.cn/pytorch/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]

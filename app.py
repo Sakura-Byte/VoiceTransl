@@ -1,10 +1,13 @@
 import sys, os
 
-os.chdir(sys._MEIPASS)
+# if _MEIPASS is in sys
+if '_MEIPASS' in sys.__dict__:
+    os.chdir(sys._MEIPASS)
+    
 import shutil
-from PyQt5 import QtGui, QtCore
-from PyQt5.QtCore import Qt, QThread, QObject, pyqtSignal, QTimer, QDateTime, QSize
-from PyQt5.QtWidgets import QApplication, QVBoxLayout, QFileDialog, QFrame
+from PyQt6 import QtGui, QtCore
+from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QTimer, QDateTime, QSize
+from PyQt6.QtWidgets import QApplication, QVBoxLayout, QFileDialog, QFrame
 from qfluentwidgets import PushButton as QPushButton, TextEdit as QTextEdit, LineEdit as QLineEdit, ComboBox as QComboBox, Slider as QSlider, FluentWindow as QMainWindow, PlainTextEdit as QPlainTextEdit, SplashScreen
 from qfluentwidgets import FluentIcon, NavigationItemPosition, SubtitleLabel, TitleLabel, BodyLabel
 
@@ -13,14 +16,8 @@ import json
 import requests
 import subprocess
 from time import sleep
-from yt_dlp import YoutubeDL
-from bilibili_dl.bilibili_dl.Video import Video
-from bilibili_dl.bilibili_dl.downloader import download
-from bilibili_dl.bilibili_dl.utils import send_request
-from bilibili_dl.bilibili_dl.constants import URL_VIDEO_INFO
-
 from prompt2srt import make_srt, make_lrc
-from srt2prompt import make_prompt, merge_srt_files
+from srt2prompt import make_prompt
 from GalTransl.__main__ import worker
 
 ONLINE_TRANSLATOR_MAPPING = {
@@ -83,51 +80,37 @@ class MainWindow(QMainWindow):
         self.initSettingsTab()
         self.initAdvancedSettingTab()
         self.initDictTab()
-        self.initClipTab()
-        self.initSynthTab()
-        self.initSummarizeTab()
 
-        # load config
+        # load config (simplified - no whisper model selection needed)
         if os.path.exists('config.txt'):
             with open('config.txt', 'r', encoding='utf-8') as f:
                 lines = f.readlines()
-                whisper_file = lines[0].strip()
-                translator = lines[1].strip()
-                language = lines[2].strip()
-                gpt_token = lines[3].strip()
-                gpt_address = lines[4].strip()
-                gpt_model = lines[5].strip()
-                sakura_file = lines[6].strip()
-                sakura_mode = int(lines[7].strip())
-                proxy_address = lines[8].strip()
-                summary_address = lines[9].strip()
-                summary_model = lines[10].strip()
-                summary_token = lines[11].strip()
-                uvr_file = lines[12].strip()
-                output_format = lines[13].strip()
+                if len(lines) >= 8:  # Skip whisper_file (line 0), start from translator
+                    translator = lines[1].strip()
+                    language = lines[2].strip()
+                    gpt_token = lines[3].strip()
+                    gpt_address = lines[4].strip()
+                    gpt_model = lines[5].strip()
+                    sakura_file = lines[6].strip()
+                    sakura_mode = int(lines[7].strip())
+                    output_format = lines[8].strip()
 
-                if self.whisper_file: self.whisper_file.setCurrentText(whisper_file)
-                self.translator_group.setCurrentText(translator)
-                self.input_lang.setCurrentText(language)
-                self.gpt_token.setText(gpt_token)
-                self.gpt_address.setText(gpt_address)
-                self.gpt_model.setText(gpt_model)
-                if self.sakura_file: self.sakura_file.setCurrentText(sakura_file)
-                self.sakura_mode.setValue(sakura_mode)
-                self.proxy_address.setText(proxy_address)
-                self.summarize_address.setText(summary_address)
-                self.summarize_model.setText(summary_model)
-                self.summarize_token.setText(summary_token)
-                if self.uvr_file: self.uvr_file.setCurrentText(uvr_file)
-                self.output_format.setCurrentText(output_format)
+                    self.translator_group.setCurrentText(translator)
+                    self.input_lang.setCurrentText(language)
+                    self.gpt_token.setText(gpt_token)
+                    self.gpt_address.setText(gpt_address)
+                    self.gpt_model.setText(gpt_model)
+                    if self.sakura_file: self.sakura_file.setCurrentText(sakura_file)
+                    self.sakura_mode.setValue(sakura_mode)
 
-        if os.path.exists('whisper/param.txt'):
-            with open('whisper/param.txt', 'r', encoding='utf-8') as f:
-                self.param_whisper.setPlainText(f.read())
+                    self.output_format.setCurrentText(output_format)
 
-        if os.path.exists('whisper-faster/param.txt'):
-            with open('whisper-faster/param.txt', 'r', encoding='utf-8') as f:
-                self.param_whisper_faster.setPlainText(f.read())
+        # Load anime-whisper config if exists
+        if os.path.exists('anime_whisper_config.txt'):
+            with open('anime_whisper_config.txt', 'r', encoding='utf-8') as f:
+                config_line = f.read().strip()
+                if config_line == 'suppress_repetitions':
+                    self.suppress_repetitions.setCurrentText('启用重复抑制')
 
         if os.path.exists('llama/param.txt'):
             with open('llama/param.txt', 'r', encoding='utf-8') as f:
@@ -291,23 +274,12 @@ B站教程：https://space.bilibili.com/36464441/lists/3239068。
         self.input_files_list.setPlaceholderText("当前未选择本地文件...")
         self.input_output_layout.addWidget(self.input_files_list)
 
-        # YouTube URL Section
-        self.input_output_layout.addWidget(BodyLabel("🔗 或者输入B站视频BV号或者YouTube及其他视频链接（每行一个）。"))
-        self.yt_url = QTextEdit()
-        self.yt_url.setAcceptDrops(False)
-        self.yt_url.setPlaceholderText("例如：https://www.youtube.com/watch?v=...\n例如：BV1Lxt5e8EJF")
-        self.input_output_layout.addWidget(self.yt_url)
 
-        # Proxy Section
-        self.input_output_layout.addWidget(BodyLabel("🌐 设置代理地址以便下载视频和翻译。"))
-        self.proxy_address = QLineEdit()
-        self.proxy_address.setPlaceholderText("例如：http://127.0.0.1:7890，留空为不使用")
-        self.input_output_layout.addWidget(self.proxy_address)
 
         # Format Section
         self.input_output_layout.addWidget(BodyLabel("🎥 选择输出的字幕格式。"))
         self.output_format = QComboBox()
-        self.output_format.addItems(['原文SRT', '中文LRC', '中文SRT', '双语SRT'])
+        self.output_format.addItems(['原文SRT', '中文LRC', '中文SRT'])
         self.output_format.setCurrentText('中文SRT')
         self.input_output_layout.addWidget(self.output_format)
 
@@ -361,36 +333,109 @@ B站教程：https://space.bilibili.com/36464441/lists/3239068。
         self.settings_tab = Widget("Settings", self)
         self.settings_layout = self.settings_tab.vBoxLayout
         
-        # Whisper Section
-        self.settings_layout.addWidget(BodyLabel("🗣️ 选择用于语音识别的模型文件。"))
-        self.whisper_file = QComboBox()
-        whisper_lst = [i for i in os.listdir('whisper') if i.startswith('ggml') and i.endswith('bin') and not 'silero' in i] + [i for i in os.listdir('whisper-faster') if i.startswith('faster-whisper')] + ['不进行听写']
-        self.whisper_file.addItems(whisper_lst)
-        self.settings_layout.addWidget(self.whisper_file)
+        # Hybrid transcription system with improved timestamp accuracy
+        self.settings_layout.addWidget(BodyLabel("🚀 混合转录系统: TinyWhisper(时间戳) + AnimeWhisper(文本) + 智能对齐"))
 
         self.settings_layout.addWidget(BodyLabel("🌍 选择输入的语言。(ja=日语，en=英语，ko=韩语，ru=俄语，fr=法语，zh=中文，仅听写）"))
         self.input_lang = QComboBox()
         self.input_lang.addItems(['ja','en','ko','ru','fr','zh'])
         self.settings_layout.addWidget(self.input_lang)
 
-        self.open_whisper_dir = QPushButton("📁 打开Whisper目录")
-        self.open_whisper_dir.clicked.connect(lambda: os.startfile(os.path.join(os.getcwd(),'whisper')))
-        self.open_faster_dir = QPushButton("📁 打开Faster Whisper目录")
-        self.open_faster_dir.clicked.connect(lambda: os.startfile(os.path.join(os.getcwd(),'whisper-faster')))
-        self.settings_layout.addWidget(self.open_whisper_dir)
-        self.settings_layout.addWidget(self.open_faster_dir)
+        self.settings_layout.addWidget(BodyLabel("🔧 转录系统配置选项"))
 
-        self.settings_layout.addWidget(BodyLabel("🔧 输入Whisper命令行参数。"))
-        self.param_whisper = QTextEdit()
-        self.param_whisper.setPlaceholderText("每个参数空格隔开，请参考Whisper.cpp，不清楚请保持默认。")
-        self.settings_layout.addWidget(self.param_whisper)
+        # Alignment backend selection
+        self.alignment_backend = QComboBox()
+        self.alignment_backend.addItems(['本地Qwen3模型', 'OpenAI兼容API', 'Gemini原生API'])
+        self.alignment_backend.setCurrentText('本地Qwen3模型')
+        self.settings_layout.addWidget(BodyLabel("对齐后端:"))
+        self.settings_layout.addWidget(self.alignment_backend)
 
-        self.settings_layout.addWidget(BodyLabel("🔧 输入Whisper-Faster命令行参数。"))
-        self.param_whisper_faster = QTextEdit()
-        self.param_whisper_faster.setPlaceholderText("每个参数空格隔开，请参考Faster Whisper文档，不清楚请保持默认。")
-        self.settings_layout.addWidget(self.param_whisper_faster)
+        # API configuration (initially hidden)
+        self.api_config_label = BodyLabel("🌐 API配置:")
+        self.settings_layout.addWidget(self.api_config_label)
+
+        # API endpoint (for OpenAI-compatible APIs)
+        self.api_endpoint = QLineEdit()
+        self.api_endpoint.setPlaceholderText("API端点 (例如: https://api.openai.com/v1)")
+        self.api_endpoint.setText("https://api.openai.com/v1")
+        self.api_endpoint_label = BodyLabel("API端点:")
+        self.settings_layout.addWidget(self.api_endpoint_label)
+        self.settings_layout.addWidget(self.api_endpoint)
+
+        # API key (for all API backends)
+        self.api_key = QLineEdit()
+        self.api_key.setPlaceholderText("API密钥")
+        self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key_label = BodyLabel("API密钥:")
+        self.settings_layout.addWidget(self.api_key_label)
+        self.settings_layout.addWidget(self.api_key)
+
+        # Model selection (different for different backends)
+        self.api_model_label = BodyLabel("模型:")
+        self.settings_layout.addWidget(self.api_model_label)
+
+        # OpenAI/Generic model input
+        self.api_model_input = QLineEdit()
+        self.api_model_input.setPlaceholderText("模型名称 (例如: gpt-4, gpt-3.5-turbo)")
+        self.api_model_input.setText("gpt-4")
+        self.settings_layout.addWidget(self.api_model_input)
+
+        # Gemini model selection
+        self.gemini_model_combo = QComboBox()
+        self.gemini_model_combo.addItems([
+            'gemini-2.5-pro',
+            'gemini-2.5-flash',
+            'gemini-2.5-flash-lite'
+        ])
+        self.gemini_model_combo.setCurrentText('gemini-2.0-flash-exp')
+        self.settings_layout.addWidget(self.gemini_model_combo)
+
+        # Initially hide API config
+        self._toggle_api_config(False, "openai")
+
+        # Connect alignment backend change to toggle API config
+        self.alignment_backend.currentTextChanged.connect(self._on_alignment_backend_changed)
+
+        # Repetition handling option
+        self.suppress_repetitions = QComboBox()
+        self.suppress_repetitions.addItems(['关闭重复抑制', '启用重复抑制'])
+        self.suppress_repetitions.setCurrentText('关闭重复抑制')
+        self.settings_layout.addWidget(BodyLabel("重复抑制（如果出现重复幻觉可启用）："))
+        self.settings_layout.addWidget(self.suppress_repetitions)
 
         self.addSubInterface(self.settings_tab, FluentIcon.MUSIC, "听写设置", NavigationItemPosition.TOP)
+
+    def _toggle_api_config(self, show: bool, backend_type: str = "openai"):
+        """Toggle visibility of API configuration fields"""
+        self.api_config_label.setVisible(show)
+        self.api_key.setVisible(show)
+        self.api_key_label.setVisible(show)
+        self.api_model_label.setVisible(show)
+
+        # Show/hide endpoint based on backend type
+        is_openai = (backend_type == "openai")
+        self.api_endpoint.setVisible(show and is_openai)
+        self.api_endpoint_label.setVisible(show and is_openai)
+
+        # Show appropriate model selection widget
+        self.api_model_input.setVisible(show and is_openai)
+        self.gemini_model_combo.setVisible(show and not is_openai)
+
+    def _on_alignment_backend_changed(self, text: str):
+        """Handle alignment backend selection change"""
+        show_api_config = (text in ['OpenAI兼容API', 'Gemini原生API'])
+
+        if text == 'Gemini原生API':
+            self._toggle_api_config(show_api_config, "gemini")
+            # Set default Gemini model
+            self.gemini_model_combo.setCurrentText("gemini-2.0-flash-exp")
+        elif text == 'OpenAI兼容API':
+            self._toggle_api_config(show_api_config, "openai")
+            # Set default OpenAI values
+            self.api_endpoint.setText("https://api.openai.com/v1")
+            self.api_model_input.setText("gpt-4")
+        else:
+            self._toggle_api_config(False, "openai")
 
     def initAdvancedSettingTab(self):
         self.advanced_settings_tab = Widget("AdvancedSettings", self)
@@ -428,7 +473,7 @@ B站教程：https://space.bilibili.com/36464441/lists/3239068。
         self.sakura_value.setPlaceholderText("100")
         self.sakura_value.setReadOnly(True)
         self.advanced_settings_layout.addWidget(self.sakura_value)
-        self.sakura_mode = QSlider(Qt.Horizontal)
+        self.sakura_mode = QSlider(Qt.Orientation.Horizontal)
         self.sakura_mode.setRange(0, 100)
         self.sakura_mode.setValue(100)
         self.sakura_mode.valueChanged.connect(lambda: self.sakura_value.setText(str(self.sakura_mode.value())))
@@ -445,144 +490,11 @@ B站教程：https://space.bilibili.com/36464441/lists/3239068。
 
         self.addSubInterface(self.advanced_settings_tab, FluentIcon.BOOK_SHELF, "翻译设置", NavigationItemPosition.TOP)
 
-    def initClipTab(self):
-        self.clip_tab = Widget("Clip", self)
-        self.clip_layout = self.clip_tab.vBoxLayout
-
-        # Split Section
-        self.clip_layout.addWidget(BodyLabel("🔪 分割合并工具"))
-        self.split_value = QLineEdit()
-        self.split_value.setPlaceholderText("600")
-        self.split_value.setReadOnly(True)
-        self.clip_layout.addWidget(self.split_value)
-        self.split_mode = QSlider(Qt.Horizontal)
-        self.split_mode.setRange(0, 3600)
-        self.split_mode.setValue(600)
-        self.split_mode.valueChanged.connect(lambda: self.split_value.setText(str(self.split_mode.value())))
-        self.clip_layout.addWidget(self.split_mode)
-
-        self.split_files_list = QTextEdit()
-        self.split_files_list.setAcceptDrops(True)
-        self.split_files_list.dropEvent = lambda e: self.split_files_list.setPlainText('\n'.join([i[8:] for i in e.mimeData().text().split('\n')]))
-        self.split_files_list.setPlaceholderText("拖拽文件到方框内，点击运行即可，每个文件生成一个文件夹，滑动条数字代表切割每段音频的长度（秒）。")
-        self.clip_layout.addWidget(self.split_files_list)
-        self.run_split_button = QPushButton("🚀 分割")
-        self.run_split_button.clicked.connect(self.run_split)
-        self.clip_layout.addWidget(self.run_split_button)
-
-        self.merge_files_list = QTextEdit()
-        self.merge_files_list.setAcceptDrops(True)
-        self.merge_files_list.dropEvent = lambda e: self.merge_files_list.setPlainText('\n'.join([i[8:] for i in e.mimeData().text().split('\n')]))
-        self.merge_files_list.setPlaceholderText("拖拽多个字幕文件到方框内，点击运行即可，每次合并成一个文件。时间戳按照上面滑动条分割的时间累加。")
-        self.clip_layout.addWidget(self.merge_files_list)
-        self.run_merge_button = QPushButton("🚀 合并")
-        self.run_merge_button.clicked.connect(self.run_merge)
-        self.clip_layout.addWidget(self.run_merge_button)
-
-        # Clip Section
-        self.clip_layout.addWidget(BodyLabel("✂️ 切片工具"))
-        self.clip_files_list = QTextEdit()
-        self.clip_files_list.setAcceptDrops(True)
-        self.clip_files_list.dropEvent = lambda e: self.clip_files_list.setPlainText('\n'.join([i[8:] for i in e.mimeData().text().split('\n')]))
-        self.clip_files_list.setPlaceholderText("拖拽视频文件到方框内，并填写开始和结束时间，点击运行即可。")
-        self.clip_layout.addWidget(self.clip_files_list)
-        self.clip_start_time = QLineEdit()
-        self.clip_start_time.setPlaceholderText("开始时间（HH:MM:SS.xxx）")
-        self.clip_layout.addWidget(self.clip_start_time)
-        self.clip_end_time = QLineEdit()
-        self.clip_end_time.setPlaceholderText("结束时间（HH:MM:SS.xxx）")
-        self.clip_layout.addWidget(self.clip_end_time)
-        self.run_clip_button = QPushButton("🚀 切片")
-        self.run_clip_button.clicked.connect(self.run_clip)
-        self.clip_layout.addWidget(self.run_clip_button)
-        
-        self.addSubInterface(self.clip_tab, FluentIcon.TILES, "分割工具", NavigationItemPosition.TOP)
-
-    def initSynthTab(self):
-        self.synth_tab = Widget("Synth", self)
-        self.synth_layout = self.synth_tab.vBoxLayout
-
-        # Vocal Split
-        self.synth_layout.addWidget(BodyLabel("🎤 人声分离工具"))
-        self.synth_layout.addWidget(BodyLabel("选择用于伴奏分离的模型文件。"))
-        self.uvr_file = QComboBox()
-        uvr_lst = [i for i in os.listdir('uvr') if i.endswith('onnx')]
-        self.uvr_file.addItems(uvr_lst)
-        self.synth_layout.addWidget(self.uvr_file)
-        self.open_uvr_dir = QPushButton("📁 打开UVR模型目录")
-        self.open_uvr_dir.clicked.connect(lambda: os.startfile(os.path.join(os.getcwd(),'uvr')))
-        self.synth_layout.addWidget(self.open_uvr_dir)
 
 
-        self.uvr_file_list = QTextEdit()
-        self.uvr_file_list.setAcceptDrops(True)
-        self.uvr_file_list.dropEvent = lambda e: self.uvr_file_list.setPlainText('\n'.join([i[8:] for i in e.mimeData().text().split('\n')]))
-        self.uvr_file_list.setPlaceholderText("拖拽音频文件到方框内，点击运行即可。输出文件为原文件名_vocal.wav和_no_vocal.wav。")
-        self.synth_layout.addWidget(self.uvr_file_list)
 
-        self.run_uvr_button = QPushButton("🚀 人声分离")
-        self.run_uvr_button.clicked.connect(self.run_vocal_split)
-        self.synth_layout.addWidget(self.run_uvr_button)
 
-        # Video Synth
-        self.synth_layout.addWidget(BodyLabel("💾 字幕合成工具"))
-        self.synth_files_list = QTextEdit()
-        self.synth_files_list.setAcceptDrops(True)
-        self.synth_files_list.dropEvent = lambda e: self.synth_files_list.setPlainText('\n'.join([i[8:] for i in e.mimeData().text().split('\n')]))
-        self.synth_files_list.setPlaceholderText("拖拽字幕文件和视频文件到下方框内，点击运行即可。字幕和视频文件需要一一对应，例如output.mp4和output.mp4.srt。")
-        self.synth_layout.addWidget(self.synth_files_list)
-        self.run_synth_button = QPushButton("🚀 字幕合成")
-        self.run_synth_button.clicked.connect(self.run_synth)
-        self.synth_layout.addWidget(self.run_synth_button)
 
-        # Audio Synth
-        self.synth_layout.addWidget(BodyLabel("🎵 音频合成工具"))
-        self.synth_audio_files_list = QTextEdit()
-        self.synth_audio_files_list.setAcceptDrops(True)
-        self.synth_audio_files_list.dropEvent = lambda e: self.synth_audio_files_list.setPlainText('\n'.join([i[8:] for i in e.mimeData().text().split('\n')]))
-        self.synth_audio_files_list.setPlaceholderText("拖拽音频文件（wav，mp3，flac）和图像（png,jpg,jpeg）到下方框内，点击运行即可。音频和图像文件需要一一对应。")
-        self.synth_layout.addWidget(self.synth_audio_files_list)
-        self.run_synth_audio_button = QPushButton("🚀 视频合成")
-        self.run_synth_audio_button.clicked.connect(self.run_synth_audio)
-        self.synth_layout.addWidget(self.run_synth_audio_button)
-
-        self.addSubInterface(self.synth_tab, FluentIcon.DEVELOPER_TOOLS, "合成工具", NavigationItemPosition.TOP)
-
-    def initSummarizeTab(self):
-        self.summarize_tab = Widget("Summarize", self)
-        self.summarize_layout = self.summarize_tab.vBoxLayout
-
-        self.summarize_layout.addWidget(BodyLabel("🌍 OpenAI兼容地址"))
-        self.summarize_address = QLineEdit()
-        self.summarize_address.setPlaceholderText("例如：https://api.deepseek.com/v1")
-        self.summarize_layout.addWidget(self.summarize_address)
-
-        self.summarize_layout.addWidget(BodyLabel("🚩 模型名称"))
-        self.summarize_model = QLineEdit()
-        self.summarize_model.setPlaceholderText("例如：deepseek-chat")
-        self.summarize_layout.addWidget(self.summarize_model)
-
-        self.summarize_layout.addWidget(BodyLabel("📛 模型令牌"))
-        self.summarize_token = QLineEdit()
-        self.summarize_layout.addWidget(self.summarize_token)
-
-        self.summarize_layout.addWidget(BodyLabel("🖋️ 模型提示"))
-        self.summarize_prompt = QTextEdit()
-        self.summarize_prompt.setPlaceholderText("请为以下内容创建一个带有时间戳（mm:ss格式）的粗略摘要，不多于10个事件。请关注关键事件和重要时刻，并确保所有时间戳都采用分钟:秒钟格式。")
-        self.summarize_layout.addWidget(self.summarize_prompt)
-
-        self.summarize_layout.addWidget(BodyLabel("📁 输入文件"))
-        self.summarize_files_list = QTextEdit()
-        self.summarize_files_list.setAcceptDrops(True)
-        self.summarize_files_list.dropEvent = lambda e: self.summarize_files_list.setPlainText('\n'.join([i[8:] for i in e.mimeData().text().split('\n')]))
-        self.summarize_files_list.setPlaceholderText("拖拽文件到方框内，点击运行即可。输出文件为输入文件名.summary.txt。")
-        self.summarize_layout.addWidget(self.summarize_files_list)
-
-        self.run_summarize_button = QPushButton("🚀 运行")
-        self.run_summarize_button.clicked.connect(self.run_summarize)
-        self.summarize_layout.addWidget(self.run_summarize_button)
-
-        self.addSubInterface(self.summarize_tab, FluentIcon.EDUCATION, "字幕总结", NavigationItemPosition.TOP)
         
     def select_input(self):
         options = QFileDialog.Options()
@@ -598,61 +510,9 @@ B站教程：https://space.bilibili.com/36464441/lists/3239068。
         self.worker.finished.connect(self.thread.quit)
         self.thread.start()
 
-    def run_split(self):
-        self.thread = QThread()
-        self.worker = MainWorker(self)
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.split)
-        self.worker.finished.connect(self.thread.quit)
-        self.thread.start()
 
-    def run_merge(self):
-        self.thread = QThread()
-        self.worker = MainWorker(self)
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.merge)
-        self.worker.finished.connect(self.thread.quit)
-        self.thread.start()
 
-    def run_clip(self):
-        self.thread = QThread()
-        self.worker = MainWorker(self)
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.clip)
-        self.worker.finished.connect(self.thread.quit)
-        self.thread.start()
 
-    def run_synth(self):
-        self.thread = QThread()
-        self.worker = MainWorker(self)
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.synth)
-        self.worker.finished.connect(self.thread.quit)
-        self.thread.start()
-
-    def run_synth_audio(self):
-        self.thread = QThread()
-        self.worker = MainWorker(self)
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.audiosynth)
-        self.worker.finished.connect(self.thread.quit)
-        self.thread.start()
-
-    def run_vocal_split(self):
-        self.thread = QThread()
-        self.worker = MainWorker(self)
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.vocal_split)
-        self.worker.finished.connect(self.thread.quit)
-        self.thread.start()
-
-    def run_summarize(self):
-        self.thread = QThread()
-        self.worker = MainWorker(self)
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.summarize)
-        self.worker.finished.connect(self.thread.quit)
-        self.thread.start()
     
     def cleaner(self):
         self.status.emit("[INFO] 正在清理中间文件...")
@@ -686,7 +546,7 @@ class MainWorker(QObject):
     @error_handler
     def save_config(self):
         self.status.emit("[INFO] 正在读取配置...")
-        whisper_file = self.master.whisper_file.currentText()
+        # No whisper_file needed - always use anime-whisper
         translator = self.master.translator_group.currentText()
         language = self.master.input_lang.currentText()
         gpt_token = self.master.gpt_token.text()
@@ -694,20 +554,18 @@ class MainWorker(QObject):
         gpt_model = self.master.gpt_model.text()
         sakura_file = self.master.sakura_file.currentText()
         sakura_mode = self.master.sakura_mode.value()
-        proxy_address = self.master.proxy_address.text()
-        summary_address = self.master.summarize_address.text()
-        summary_model = self.master.summarize_model.text()
-        summary_token = self.master.summarize_token.text()
-        uvr_file = self.master.uvr_file.currentText()
         output_format = self.master.output_format.currentText()
 
-        # save config
+        # save config (keep format for compatibility, but whisper_file is always anime-whisper)
         with open('config.txt', 'w', encoding='utf-8') as f:
-            f.write(f"{whisper_file}\n{translator}\n{language}\n{gpt_token}\n{gpt_address}\n{gpt_model}\n{sakura_file}\n{sakura_mode}\n{proxy_address}\n{summary_address}\n{summary_model}\n{summary_token}\n{uvr_file}\n{output_format}\n")
+            f.write(f"anime-whisper\n{translator}\n{language}\n{gpt_token}\n{gpt_address}\n{gpt_model}\n{sakura_file}\n{sakura_mode}\n{output_format}\n")
 
-        # save whisper param
-        with open('whisper/param.txt', 'w', encoding='utf-8') as f:
-            f.write(self.master.param_whisper.toPlainText())
+        # save anime-whisper config
+        with open('anime_whisper_config.txt', 'w', encoding='utf-8') as f:
+            if self.master.suppress_repetitions.currentText() == '启用重复抑制':
+                f.write('suppress_repetitions')
+            else:
+                f.write('')
 
         # save llama param
         with open('llama/param.txt', 'w', encoding='utf-8') as f:
@@ -727,193 +585,25 @@ class MainWorker(QObject):
 
         self.status.emit("[INFO] 配置保存完成！")
 
-    @error_handler
-    def vocal_split(self):
-        self.save_config()
-        uvr_file = self.master.uvr_file.currentText()
-        if not uvr_file.endswith('.onnx'):
-            self.status.emit("[ERROR] 请选择正确的UVR模型文件！")
-            self.finished.emit()
-            return
 
-        input_files = self.master.uvr_file_list.toPlainText()
-        if input_files:
-            input_files = input_files.strip().split('\n')
-            for idx, input_file in enumerate(input_files):
-                if not os.path.exists(input_file):
-                    self.status.emit(f"[ERROR] {input_file}文件不存在，请重新选择文件！")
-                    self.finished.emit()
 
-                self.status.emit(f"[INFO] 正在进行伴奏分离...第{idx+1}个，共{len(input_files)}个")
-                self.pid = subprocess.Popen(['uvr/separate.exe', '-m', os.path.join('uvr',uvr_file), input_file], stdout=sys.stdout, stderr=sys.stdout, creationflags=0x08000000)
-                self.pid.wait()
-                self.pid.kill()
-                self.pid.terminate()
 
-            self.status.emit("[INFO] 文件处理完成！")
-        self.finished.emit()
 
-    @error_handler
-    def summarize(self):
-        self.save_config()
-        input_files = self.master.summarize_files_list.toPlainText()
-        address = self.master.summarize_address.text()
-        model = self.master.summarize_model.text()
-        token = self.master.summarize_token.text()
-        prompt = self.master.summarize_prompt.toPlainText()
-        if input_files:
-            input_files = input_files.strip().split('\n')
-            for idx, input_file in enumerate(input_files):
-                if not os.path.exists(input_file):
-                    self.status.emit(f"[ERROR] {input_file}文件不存在，请重新选择文件！")
-                    self.finished.emit()
 
-                from summarize import summarize
-                self.status.emit(f"[INFO] 正在进行文本摘要...第{idx+1}个，共{len(input_files)}个")
-                summarize(input_file, address, model, token, prompt)
-            self.status.emit("[INFO] 文件处理完成！")
-        self.finished.emit()
 
-    @error_handler
-    def split(self):
-        self.save_config()
-        input_files = self.master.split_files_list.toPlainText()
-        split_mode = self.master.split_mode.value()
-        if input_files:
-            input_files = input_files.strip().split('\n')
-            for idx, input_file in enumerate(input_files):
-                if not os.path.exists(input_file):
-                    self.status.emit(f"[ERROR] {input_file}文件不存在，请重新选择文件！")
-                    self.finished.emit()
 
-                self.status.emit(f"[INFO] 当前处理文件：{input_file} 第{idx+1}个，共{len(input_files)}个")
-                os.makedirs(os.path.join(*(input_file.split('.')[:-1])), exist_ok=True)
 
-                self.status.emit(f"[INFO] 正在进行音频提取...每{split_mode}秒分割一次")
-                self.pid = subprocess.Popen(['ffmpeg', '-y', '-i', input_file,  '-f', 'segment', '-segment_time', str(split_mode), '-acodec', 'pcm_s16le', '-ac', '1', '-ar', '16000', os.path.join(*(input_file.split('.')[:-1]+['%04d.wav']))], stdout=sys.stdout, stderr=sys.stdout, creationflags=0x08000000)
-                self.pid.wait()
-                self.pid.kill()
-                self.pid.terminate()
-                self.status.emit("[INFO] 音频分割完成！")
-        self.finished.emit()
 
-    @error_handler
-    def merge(self):
-        self.save_config()
-        input_files = self.master.merge_files_list.toPlainText()
-        split_mode = self.master.split_mode.value()
-        if input_files:
-            input_files = sorted(input_files.strip().split('\n'))
-            merged_prompt = []
-            for idx, input_file in enumerate(input_files):
-                if not os.path.exists(input_file):
-                    self.status.emit(f"[ERROR] {input_file}文件不存在，请重新选择文件！")
-                    self.finished.emit()
 
-                self.status.emit(f"[INFO] 当前处理文件：{input_file} 第{idx+1}个，共{len(input_files)}个")
-                prompt = make_prompt(input_file)
 
-                for i in prompt:
-                    i['start'] += idx * split_mode
-                    i['end'] += idx * split_mode
-                    merged_prompt.append(i)
 
-            with open(input_files[0].replace('.srt','_merged.json'), 'w', encoding='utf-8') as f:
-                json.dump(merged_prompt, f, ensure_ascii=False, indent=4)
-            make_srt(input_files[0].replace('.srt','_merged.json'), input_files[0].replace('.srt','_merged.srt'))
-            self.status.emit("[INFO] 所有文件处理完成！")
-        self.finished.emit()
 
-    @error_handler
-    def synth(self):
-        self.save_config()
-        input_files = self.master.synth_files_list.toPlainText()
-        if input_files:
-            input_files = input_files.strip().split('\n')
-            srt_files = sorted([i for i in input_files if i.endswith('.srt')])
-            video_files = sorted([i for i in input_files if not i.endswith('.srt')])
-            if len(srt_files) != len(video_files):
-                self.status.emit("[ERROR] 字幕文件和视频文件数量不匹配，请重新选择文件！")
-                self.finished.emit()
-            
-            for idx, (input_file, input_srt) in enumerate(zip(video_files, srt_files)):
-                if not os.path.exists(input_file):
-                    self.status.emit(f"[ERROR] {input_file}文件不存在，请重新选择文件！")
-                    self.finished.emit()
-
-                if not os.path.exists(input_srt):
-                    self.status.emit(f"[ERROR] {input_srt}文件不存在，请重新选择文件！")
-                    self.finished.emit()
-
-                input_srt = shutil.copy(input_srt, 'project/cache/')
-
-                self.status.emit(f"[INFO] 当前处理文件：{input_file} 第{idx+1}个，共{len(video_files)}个")
-                self.pid = subprocess.Popen(['ffmpeg', '-y', '-i', input_file,  '-vf', f'subtitles={input_srt}', '-vcodec', 'libx264', '-acodec', 'aac', input_file+'_synth.mp4'], stdout=sys.stdout, stderr=sys.stdout, creationflags=0x08000000)
-                self.pid.wait()
-                self.pid.kill()
-                self.pid.terminate()
-                self.status.emit("[INFO] 视频合成完成！")
-            
-        self.finished.emit()
-
-    @error_handler
-    def clip(self):
-        self.save_config()
-        input_files = self.master.clip_files_list.toPlainText()
-        clip_start = self.master.clip_start_time.text()
-        clip_end = self.master.clip_end_time.text()
-        if input_files:
-            input_files = input_files.strip().split('\n')
-            for idx, input_file in enumerate(input_files):
-                if not os.path.exists(input_file):
-                    self.status.emit(f"[ERROR] {input_file}文件不存在，请重新选择文件！")
-                    self.finished.emit()
-
-                self.status.emit(f"[INFO] 当前处理文件：{input_file} 第{idx+1}个，共{len(input_files)}个")
-                self.status.emit(f"[INFO] 正在进行切片...从{clip_start}到{clip_end}...")
-                self.pid = subprocess.Popen(['ffmpeg', '-y', '-i', input_file, '-ss', clip_start, '-to', clip_end, '-vcodec', 'libx264', '-acodec', 'aac', os.path.join(*(input_file.split('.')[:-1]))+'_clip.'+input_file.split('.')[-1]], stdout=sys.stdout, stderr=sys.stdout, creationflags=0x08000000)
-                self.pid.wait()
-                self.pid.kill()
-                self.pid.terminate()
-                self.status.emit("[INFO] 视频切片完成！")
-        self.finished.emit()
-
-    @error_handler
-    def audiosynth(self):
-        self.save_config()
-        input_files = self.master.synth_audio_files_list.toPlainText()
-        if input_files:
-            input_files = input_files.strip().split('\n')
-            audio_files = sorted([i for i in input_files if i.endswith('.wav') or i.endswith('.mp3') or i.endswith('.flac')])
-            image_files = sorted([i for i in input_files if i.endswith('.png') or i.endswith('.jpg') or i.endswith('.jpeg')])
-            if len(audio_files) != len(image_files):
-                self.status.emit("[ERROR] 音频文件和图像文件数量不匹配，请重新选择文件！")
-                self.finished.emit()
-            
-            for idx, (audio_input, image_input) in enumerate(zip(audio_files, image_files)):
-                if not os.path.exists(audio_input):
-                    self.status.emit(f"[ERROR] {audio_input}文件不存在，请重新选择文件！")
-                    self.finished.emit()
-
-                if not os.path.exists(image_input):
-                    self.status.emit(f"[ERROR] {image_input}文件不存在，请重新选择文件！")
-                    self.finished.emit()
-
-                self.status.emit(f"[INFO] 当前处理文件：{audio_input} 第{idx+1}个，共{len(image_files)}个")
-                self.pid = subprocess.Popen(['ffmpeg', '-y', '-loop', '1', '-r', '1', '-f', 'image2', '-i', image_input, '-i', audio_input, '-shortest', '-vcodec', 'libx264', '-acodec', 'aac', audio_input+'_synth.mp4'], stdout=sys.stdout, stderr=sys.stdout, creationflags=0x08000000)
-                self.pid.wait()
-                self.pid.kill()
-                self.pid.terminate()
-                self.status.emit("[INFO] 视频合成完成！")
-            
-        self.finished.emit()
 
     @error_handler
     def run(self):
         self.save_config()
         input_files = self.master.input_files_list.toPlainText()
-        yt_url = self.master.yt_url.toPlainText()
-        whisper_file = self.master.whisper_file.currentText()
+        # Use hybrid transcription system for better accuracy
         translator = self.master.translator_group.currentText()
         language = self.master.input_lang.currentText()
         gpt_token = self.master.gpt_token.text()
@@ -921,24 +611,19 @@ class MainWorker(QObject):
         gpt_model = self.master.gpt_model.text()
         sakura_file = self.master.sakura_file.currentText()
         sakura_mode = self.master.sakura_mode.value()
-        proxy_address = self.master.proxy_address.text()
         before_dict = self.master.before_dict.toPlainText()
         gpt_dict = self.master.gpt_dict.toPlainText()
         after_dict = self.master.after_dict.toPlainText()
         extra_prompt = self.master.extra_prompt.toPlainText()
-        param_whisper = self.master.param_whisper.toPlainText()
-        param_whisper_faster = self.master.param_whisper_faster.toPlainText()
+        # Get anime-whisper config
+        suppress_repetitions = self.master.suppress_repetitions.currentText() == '启用重复抑制'
         param_llama = self.master.param_llama.toPlainText()
         output_format = self.master.output_format.currentText()
 
         if not gpt_token:
             gpt_token = 'sk-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'
 
-        with open('whisper/param.txt', 'w', encoding='utf-8') as f:
-            f.write(param_whisper)
-
-        with open('whisper-faster/param.txt', 'w', encoding='utf-8') as f:
-            f.write(param_whisper_faster)
+        # Old whisper parameter files are no longer needed
 
         with open('llama/param.txt', 'w', encoding='utf-8') as f:
             f.write(param_llama)
@@ -971,15 +656,12 @@ class MainWorker(QObject):
             if os.path.exists('project/extra_prompt.txt'):
                 os.remove('project/extra_prompt.txt')
 
-        self.status.emit(f"[INFO] 当前输入文件：{input_files}, 当前视频链接：{yt_url}")
+        self.status.emit(f"[INFO] 当前输入文件：{input_files}")
 
         if input_files:
             input_files = input_files.split('\n')
         else:
             input_files = []
-
-        if yt_url:
-            input_files.extend(yt_url.split('\n'))
 
         os.makedirs('project/cache', exist_ok=True)
 
@@ -1007,47 +689,16 @@ class MainWorker(QObject):
                         lines[idx+2] = f"      - token: {gpt_token}\n"
                         lines[idx+4] = f"    defaultEndpoint: {api}\n"
                         lines[idx+5] = f'    rewriteModelName: "{gpt_model}"\n'
-            if proxy_address:
-                if 'proxy' in line:
-                    lines[idx+1] = f"  enableProxy: true\n"
-                    lines[idx+3] = f"    - address: {proxy_address}\n"
-            else:
-                if 'proxy' in line:
-                    lines[idx+1] = f"  enableProxy: false\n"
+            if 'proxy' in line:
+                lines[idx+1] = "  enableProxy: false\n"
 
         with open('project/config.yaml', 'w', encoding='utf-8') as f:
             f.writelines(lines)
 
         for idx, input_file in enumerate(input_files):
             if not os.path.exists(input_file):
-                if input_file.startswith('BV'):
-                    self.status.emit("[INFO] 正在下载视频...")
-                    res = send_request(URL_VIDEO_INFO, params={'bvid': input_file})
-                    download([Video(
-                        bvid=res['bvid'],
-                        cid=res['cid'] if res['videos'] == 1 else res['pages'][0]['cid'],
-                        title=res['title'] if res['videos'] == 1 else res['pages'][0]['part'],
-                        up_name=res['owner']['name'],
-                        cover_url=res['pic'] if res['videos'] == 1 else res['pages'][0]['pic'],
-                    )], False)
-                    self.status.emit("[INFO] 视频下载完成！")
-                    title = res['title'] if res['videos'] == 1 else res['pages'][0]['part']
-                    title = re.sub(r'[.:?/\\]', ' ', title).strip()
-                    title = re.sub(r'\s+', ' ', title)
-                    input_file = f'{title}.mp4'
-
-                else:
-                    if os.path.exists('YoutubeDL.webm'):
-                        os.remove('YoutubeDL.webm')
-                    with YoutubeDL({'proxy': proxy_address,'outtmpl': 'YoutubeDL.webm'}) as ydl:
-                        self.status.emit("[INFO] 正在下载视频...")
-                        results = ydl.download([input_file])
-                        self.status.emit("[INFO] 视频下载完成！")
-                    input_file = 'YoutubeDL.webm'
-
-                if os.path.exists(os.path.join('project/cache', os.path.basename(input_file))):
-                    os.remove(os.path.join('project/cache', os.path.basename(input_file)))
-                input_file = shutil.move(input_file, 'project/cache/')
+                self.status.emit(f"[ERROR] 文件不存在：{input_file}")
+                continue
 
             self.status.emit(f"[INFO] 当前处理文件：{input_file} 第{idx+1}个，共{len(input_files)}个")
 
@@ -1059,48 +710,152 @@ class MainWorker(QObject):
                 self.status.emit("[INFO] 字幕转换完成！")
                 input_file = input_file[:-4]
             else:
-                if whisper_file == '不进行听写':
-                    self.status.emit("[INFO] 不进行听写，跳过听写步骤...")
-                    continue
+                # Perform transcription with hybrid system for improved timestamp accuracy
 
-                wav_file = '.'.join(input_file.split('.')[:-1]) + '.16k.wav'
-                self.status.emit("[INFO] 正在进行音频提取...")
-                self.pid = subprocess.Popen(['ffmpeg', '-y', '-i', input_file, '-acodec', 'pcm_s16le', '-ac', '1', '-ar', '16000', wav_file], stdout=sys.stdout, stderr=sys.stdout, creationflags=0x08000000)
-                self.pid.wait()
-                self.pid.kill()
-                self.pid.terminate()
-
-                if not os.path.exists(wav_file):
-                    self.status.emit("[ERROR] 音频提取失败，请检查文件格式！")
+                # Check if input audio file exists
+                if not os.path.exists(input_file):
+                    self.status.emit("[ERROR] 音频文件不存在，请检查文件路径！")
                     break
 
                 self.status.emit("[INFO] 正在进行语音识别...")
 
-                if whisper_file.startswith('ggml'):
-                    print(param_whisper)
-                    self.pid = subprocess.Popen([param.replace('$whisper_file',whisper_file).replace('$input_file',wav_file[:-4]).replace('$language',language) for param in param_whisper.split()], stdout=sys.stdout, stderr=sys.stdout, creationflags=0x08000000)
-                elif whisper_file.startswith('faster-whisper'):
-                    print(param_whisper_faster)
-                    self.pid = subprocess.Popen([param.replace('$whisper_file',whisper_file[15:]).replace('$input_file',wav_file[:-4]).replace('$language',language).replace('$output_dir',os.path.dirname(input_file)) for param in param_whisper_faster.split()], stdout=sys.stdout, stderr=sys.stdout, creationflags=0x08000000)
+                # Use hybrid transcription system for better timestamp accuracy
+                try:
+                    from hybrid_transcription_backend import HybridTranscriptionBackend
+
+                    # Get alignment backend configuration
+                    backend_text = self.master.alignment_backend.currentText()
+                    if backend_text == 'OpenAI兼容API':
+                        alignment_type = "openai"
+                    elif backend_text == 'Gemini原生API':
+                        alignment_type = "gemini"
+                    else:
+                        alignment_type = "qwen3"
+
+                    # Prepare configuration
+                    config = {"alignment_type": alignment_type}
+
+                    if alignment_type in ["openai", "gemini"]:
+                        # Get API key (common for both)
+                        api_key = self.master.api_key.text().strip()
+
+                        if alignment_type == "openai":
+                            config.update({
+                                "api_endpoint": self.master.api_endpoint.text().strip(),
+                                "api_key": api_key,
+                                "model_name": self.master.api_model_input.text().strip()
+                            })
+                        else:  # gemini
+                            config.update({
+                                "api_key": api_key,
+                                "model_name": self.master.gemini_model_combo.currentText()
+                            })
+
+                        # Validate API configuration
+                        if not api_key:
+                            self.status.emit("[ERROR] API密钥未配置")
+                            continue
+
+                        if alignment_type == "openai":
+                            if not config["api_endpoint"]:
+                                self.status.emit("[ERROR] API端点未配置")
+                                continue
+                            if not config["model_name"]:
+                                self.status.emit("[ERROR] 模型名称未配置")
+                                continue
+                        else:  # gemini
+                            if not config["model_name"]:
+                                self.status.emit("[ERROR] Gemini模型未选择")
+                                continue
+
+                    # Initialize hybrid transcription backend
+                    alignment_name = {
+                        "openai": "OpenAI兼容API",
+                        "gemini": "Gemini原生API",
+                        "qwen3": "Qwen3"
+                    }.get(alignment_type, "Qwen3")
+                    self.status.emit(f"[INFO] 初始化混合转录系统 (TinyWhisper + AnimeWhisper + {alignment_name})...")
+                    backend = HybridTranscriptionBackend(config)
+                    if not backend.initialize():
+                        self.status.emit("[ERROR] Failed to initialize hybrid transcription system")
+                        continue
+
+                    # Get configuration
+                    suppress_repetitions = self.master.suppress_repetitions.currentText() == '启用重复抑制'
+
+                    # Transcribe audio using hybrid system
+                    self.status.emit("[INFO] 使用混合转录系统进行高质量转录...")
+
+                    srt_output_path = '.'.join(input_file.split('.')[:-1]) + '.srt'
+
+                    # Define progress callback to update UI in real-time
+                    def progress_callback(message):
+                        self.status.emit(message)
+
+                    success = backend.transcribe_to_srt(
+                        input_file,  # Use original audio file directly
+                        srt_output_path,
+                        language=language,
+                        progress_callback=progress_callback,
+                        suppress_repetitions=suppress_repetitions
+                    )
+
+                    if not success:
+                        self.status.emit("[ERROR] Hybrid transcription failed")
+                        continue
+
+                    self.status.emit("[INFO] ✅ 混合转录完成！时间戳准确性大幅提升！")
+
+                    # Clean up backend
+                    backend.cleanup()
+
+                except Exception as e:
+                    self.status.emit(f"[ERROR] Hybrid transcription error: {str(e)}")
+                    # Fallback to original anime-whisper if hybrid system fails
+                    self.status.emit("[INFO] 回退到原始 AnimeWhisper 系统...")
+                    try:
+                        from anime_whisper_backend import AnimeWhisperBackend
+
+                        backend = AnimeWhisperBackend()
+                        if not backend.initialize():
+                            self.status.emit("[ERROR] Failed to initialize fallback anime-whisper model")
+                            continue
+
+                        suppress_repetitions = self.master.suppress_repetitions.currentText() == '启用重复抑制'
+                        srt_output_path = '.'.join(input_file.split('.')[:-1]) + '.srt'
+
+                        success = backend.transcribe_to_srt(
+                            input_file,
+                            srt_output_path,
+                            language=language,
+                            suppress_repetitions=suppress_repetitions
+                        )
+
+                        if not success:
+                            self.status.emit("[ERROR] Fallback transcription also failed")
+                            continue
+
+                        backend.cleanup()
+                        self.status.emit("[INFO] ⚠️ 使用回退系统完成转录")
+
+                    except Exception as fallback_e:
+                        self.status.emit(f"[ERROR] Fallback error: {str(fallback_e)}")
+                        continue
+
+                # Generate base filename without extension for further processing
+                base_filename = '.'.join(input_file.split('.')[:-1])
+                srt_file = base_filename + '.srt'
+
+                output_file_path = os.path.join('project/gt_input', os.path.basename(base_filename)+'.json')
+                make_prompt(srt_file, output_file_path)
+
+                # For 原文SRT, keep the SRT file generated by hybrid system
+                # For other formats, clean up the temporary SRT file
+                if output_format != '原文SRT':
+                    if os.path.exists(srt_file):
+                        os.remove(srt_file)
                 else:
-                    self.status.emit("[INFO] 不进行听写，跳过听写步骤...")
-                    continue
-                self.pid.wait()
-                self.pid.kill()
-                self.pid.terminate()
-
-                input_file = wav_file[:-8]
-                output_file_path = os.path.join('project/gt_input', os.path.basename(input_file)+'.json')
-                make_prompt(wav_file[:-4]+'.srt', output_file_path)
-
-                if output_format == '原文SRT' or output_format == '双语SRT':
-                    make_srt(output_file_path, input_file+'.srt')
-
-                if os.path.exists(wav_file):
-                    os.remove(wav_file)
-
-                if os.path.exists(wav_file[:-4]+'.srt'):
-                    os.remove(wav_file[:-4]+'.srt')
+                    self.status.emit(f"[INFO] 原文SRT文件已保存: {srt_file}")
                 self.status.emit("[INFO] 语音识别完成！")
 
             if translator == '不进行翻译':
@@ -1141,14 +896,11 @@ class MainWorker(QObject):
             worker('project', 'config.yaml', worker_trans, show_banner=False)
 
             self.status.emit("[INFO] 正在生成字幕文件...")
-            if output_format == '中文SRT' or output_format == '双语SRT':
+            if output_format == '中文SRT':
                 make_srt(output_file_path.replace('gt_input','gt_output'), input_file+'.zh.srt')
 
             if output_format == '中文LRC':
                 make_lrc(output_file_path.replace('gt_input','gt_output'), input_file+'.lrc')
-
-            if output_format == '双语SRT':
-                merge_srt_files([input_file+'.srt',input_file+'.zh.srt'], input_file+'.combine.srt')
 
             self.status.emit("[INFO] 字幕文件生成完成！")
 
@@ -1161,8 +913,7 @@ class MainWorker(QObject):
         self.finished.emit()
 
 if __name__ == "__main__":
-    QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling)
     app = QApplication(sys.argv)
     main_window = MainWindow()
     main_window.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())

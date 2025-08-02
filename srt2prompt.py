@@ -4,14 +4,6 @@ import json, argparse
 from datetime import timedelta
 import pysrt
 
-def merge_srt_files(input_files, output_file):
-    merged_subs = pysrt.SubRipFile()
-
-    for input_file in input_files:
-        subs = pysrt.open(input_file)
-        merged_subs.extend(subs)
-
-    merged_subs.save(output_file, encoding='utf-8')
 
 def make_prompt(input_file, output_file=None):
     # read srt file

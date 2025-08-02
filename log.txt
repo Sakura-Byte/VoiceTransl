@@ -1,0 +1,52 @@
+INFO:hybrid_transcription_backend:Initializing Hybrid Transcription Backend...
+INFO:hybrid_transcription_backend:1/3 Initializing TinyWhisper backend...
+INFO:tiny_whisper_backend:CUDA available with 1 device(s)
+INFO:tiny_whisper_backend:Initializing tiny-whisper on cuda with torch.float16
+Device set to use cuda
+INFO:tiny_whisper_backend:Tiny-Whisper initialized successfully
+INFO:hybrid_transcription_backend:2/3 Initializing AnimeWhisper backend...
+INFO:anime_whisper_backend:CUDA available with 1 device(s)
+INFO:anime_whisper_backend:Initializing anime-whisper on cuda with torch.float16
+Device set to use cuda
+Using `chunk_length_s` is very experimental with seq2seq models. The results will not necessarily be entirely accurate and will have caveats. More information: https://github.com/huggingface/transformers/pull/20104. Ignore this warning with pipeline(..., ignore_warning=True). To use Whisper for long-form transcription, use rather the model's `generate` method directly as the model relies on it's own chunking mechanism (cf. Whisper original paper, section 3.8. Long-form Transcription).
+INFO:anime_whisper_backend:Anime-Whisper initialized successfully
+INFO:hybrid_transcription_backend:3/3 Initializing Gemini alignment backend...
+INFO:gemini_alignment_backend:Testing connection to Gemini API
+INFO:root:AFC is enabled with max remote calls: 10.
+INFO:root:AFC remote call 1 is done.
+INFO:gemini_alignment_backend:Gemini API connection test successful
+INFO:gemini_alignment_backend:Gemini API backend initialized successfully
+INFO:gemini_alignment_backend:Model: gemini-2.5-flash-lite
+INFO:hybrid_transcription_backend:✅ Hybrid Transcription Backend initialized successfully!
+INFO:hybrid_transcription_backend:Starting hybrid transcription: C:/Users/SakuraPY/Downloads/01.導入.mp3
+INFO:hybrid_transcription_backend:Step 1/3: Getting rough timestamps from TinyWhisper...
+INFO:tiny_whisper_backend:Transcribing with timestamps: C:/Users/SakuraPY/Downloads/01.導入.mp3
+INFO:tiny_whisper_backend:Generated 13 segments with timestamps
+INFO:hybrid_transcription_backend:✅ Got 13 rough segments
+INFO:hybrid_transcription_backend:Step 2/3: Getting accurate text from AnimeWhisper...
+INFO:anime_whisper_backend:Transcribing: C:/Users/SakuraPY/Downloads/01.導入.mp3
+INFO:anime_whisper_backend:Transcription completed successfully
+INFO:hybrid_transcription_backend:✅ Got accurate text (465 characters)
+INFO:hybrid_transcription_backend:Step 3/3: Aligning text with timestamps using Gemini原生API...
+INFO:gemini_alignment_backend:Generating text alignment using Gemini API...
+INFO:gemini_alignment_backend:Making Gemini API request (attempt 1/3)
+INFO:root:AFC is enabled with max remote calls: 10.
+INFO:root:AFC remote call 1 is done.
+ERROR:gemini_alignment_backend:No response text found in Gemini API response
+INFO:gemini_alignment_backend:Making Gemini API request (attempt 2/3)
+INFO:root:AFC is enabled with max remote calls: 10.
+INFO:root:AFC remote call 1 is done.
+ERROR:gemini_alignment_backend:No response text found in Gemini API response
+INFO:gemini_alignment_backend:Making Gemini API request (attempt 3/3)
+INFO:root:AFC is enabled with max remote calls: 10.
+INFO:root:AFC remote call 1 is done.
+ERROR:gemini_alignment_backend:No response text found in Gemini API response
+ERROR:gemini_alignment_backend:All Gemini API request attempts failed
+ERROR:gemini_alignment_backend:Failed to get response from Gemini API
+INFO:hybrid_transcription_backend:✅ Aligned 13 segments
+INFO:hybrid_transcription_backend:🎉 Hybrid transcription completed successfully!
+INFO:hybrid_transcription_backend:SRT file saved with 13 entries: C:/Users/SakuraPY/Downloads/01.導入.srt
+INFO:tiny_whisper_backend:Tiny-Whisper backend cleaned up
+INFO:anime_whisper_backend:Anime-Whisper backend cleaned up
+INFO:gemini_alignment_backend:Gemini alignment backend cleaned up
+INFO:hybrid_transcription_backend:Hybrid Transcription Backend cleaned up
