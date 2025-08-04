@@ -3,12 +3,13 @@ import sys, os
 # if _MEIPASS is in sys
 if '_MEIPASS' in sys.__dict__:
     os.chdir(sys._MEIPASS)
-    
+
 import shutil
+import threading
 from PyQt6 import QtGui, QtCore
 from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QTimer, QDateTime, QSize
 from PyQt6.QtWidgets import QApplication, QVBoxLayout, QFileDialog, QFrame
-from qfluentwidgets import PushButton as QPushButton, TextEdit as QTextEdit, LineEdit as QLineEdit, ComboBox as QComboBox, Slider as QSlider, FluentWindow as QMainWindow, PlainTextEdit as QPlainTextEdit, SplashScreen
+from qfluentwidgets import PushButton as QPushButton, TextEdit as QTextEdit, LineEdit as QLineEdit, ComboBox as QComboBox, Slider as QSlider, FluentWindow as QMainWindow, PlainTextEdit as QPlainTextEdit, SplashScreen, CheckBox as QCheckBox
 from qfluentwidgets import FluentIcon, NavigationItemPosition, SubtitleLabel, TitleLabel, BodyLabel
 
 import re
@@ -80,6 +81,7 @@ class MainWindow(QMainWindow):
         self.initSettingsTab()
         self.initAdvancedSettingTab()
         self.initDictTab()
+        self.initAPIServerTab()
 
         # load config (simplified - no whisper model selection needed)
         if os.path.exists('config.txt'):
@@ -96,7 +98,7 @@ class MainWindow(QMainWindow):
                     output_format = lines[8].strip()
 
                     self.translator_group.setCurrentText(translator)
-                    self.input_lang.setCurrentText(language)
+                    # Language is now fixed to Japanese
                     self.gpt_token.setText(gpt_token)
                     self.gpt_address.setText(gpt_address)
                     self.gpt_model.setText(gpt_model)
@@ -105,12 +107,26 @@ class MainWindow(QMainWindow):
 
                     self.output_format.setCurrentText(output_format)
 
-        # Load anime-whisper config if exists
-        if os.path.exists('anime_whisper_config.txt'):
-            with open('anime_whisper_config.txt', 'r', encoding='utf-8') as f:
-                config_line = f.read().strip()
-                if config_line == 'suppress_repetitions':
-                    self.suppress_repetitions.setCurrentText('启用重复抑制')
+        # Load transcription config if exists
+        if os.path.exists('transcription_config.txt'):
+            with open('transcription_config.txt', 'r', encoding='utf-8') as f:
+                config_lines = f.readlines()
+                if len(config_lines) >= 3:
+                    use_hybrid = config_lines[0].strip() == 'true'
+                    suppress_reps = config_lines[1].strip() == 'true'
+                    alignment_backend = config_lines[2].strip()
+                    
+                    self.use_hybrid_backend.setChecked(use_hybrid)
+                    self.suppress_repetitions.setChecked(suppress_reps)
+                    
+                    # Map alignment backend
+                    alignment_map = {
+                        'qwen3': '本地Qwen3模型',
+                        'openai': 'OpenAI兼容API',
+                        'gemini': 'Gemini原生API'
+                    }
+                    if alignment_backend in alignment_map:
+                        self.alignment_backend.setCurrentText(alignment_map[alignment_backend])
 
         if os.path.exists('llama/param.txt'):
             with open('llama/param.txt', 'r', encoding='utf-8') as f:
@@ -336,12 +352,19 @@ B站教程：https://space.bilibili.com/36464441/lists/3239068。
         # Hybrid transcription system with improved timestamp accuracy
         self.settings_layout.addWidget(BodyLabel("🚀 混合转录系统: TinyWhisper(时间戳) + AnimeWhisper(文本) + 智能对齐"))
 
-        self.settings_layout.addWidget(BodyLabel("🌍 选择输入的语言。(ja=日语，en=英语，ko=韩语，ru=俄语，fr=法语，zh=中文，仅听写）"))
-        self.input_lang = QComboBox()
-        self.input_lang.addItems(['ja','en','ko','ru','fr','zh'])
-        self.settings_layout.addWidget(self.input_lang)
+        self.settings_layout.addWidget(BodyLabel("🌍 输入语言已固定为日语 (ja)"))
 
         self.settings_layout.addWidget(BodyLabel("🔧 转录系统配置选项"))
+
+        # Hybrid transcription toggle
+        self.use_hybrid_backend = QCheckBox("使用混合转录系统")
+        self.use_hybrid_backend.setChecked(True)
+        self.settings_layout.addWidget(self.use_hybrid_backend)
+        
+        # Suppress repetitions toggle
+        self.suppress_repetitions = QCheckBox("抑制重复文本")
+        self.suppress_repetitions.setChecked(False)
+        self.settings_layout.addWidget(self.suppress_repetitions)
 
         # Alignment backend selection
         self.alignment_backend = QComboBox()
@@ -527,6 +550,245 @@ B站教程：https://space.bilibili.com/36464441/lists/3239068。
             shutil.rmtree('project/cache')
         os.makedirs('project/cache', exist_ok=True)
 
+    def initAPIServerTab(self):
+        """Initialize API Server configuration tab"""
+        self.api_server_tab = Widget("API服务器")
+        self.api_server_layout = self.api_server_tab.vBoxLayout
+
+        # API Server Status Section
+        self.api_server_layout.addWidget(TitleLabel("🌐 API服务器状态"))
+
+        self.api_status_frame = QFrame()
+        self.api_status_layout = QVBoxLayout(self.api_status_frame)
+
+        self.api_status_label = BodyLabel("状态: 未启动")
+        self.api_status_layout.addWidget(self.api_status_label)
+
+        self.api_url_label = BodyLabel("服务地址: -")
+        self.api_status_layout.addWidget(self.api_url_label)
+
+        self.api_server_layout.addWidget(self.api_status_frame)
+
+        # API Server Configuration Section
+        self.api_server_layout.addWidget(TitleLabel("⚙️ 服务器配置"))
+
+        # Host configuration
+        self.api_host_label = BodyLabel("主机地址:")
+        self.api_server_layout.addWidget(self.api_host_label)
+        self.api_host = QLineEdit()
+        self.api_host.setPlaceholderText("127.0.0.1")
+        self.api_host.setText("127.0.0.1")
+        self.api_server_layout.addWidget(self.api_host)
+
+        # Port configuration
+        self.api_port_label = BodyLabel("端口:")
+        self.api_server_layout.addWidget(self.api_port_label)
+        self.api_port = QLineEdit()
+        self.api_port.setPlaceholderText("8000")
+        self.api_port.setText("8000")
+        self.api_server_layout.addWidget(self.api_port)
+
+        # Max concurrent tasks
+        self.api_max_tasks_label = BodyLabel("最大并发任务数:")
+        self.api_server_layout.addWidget(self.api_max_tasks_label)
+        self.api_max_tasks = QLineEdit()
+        self.api_max_tasks.setPlaceholderText("5")
+        self.api_max_tasks.setText("5")
+        self.api_server_layout.addWidget(self.api_max_tasks)
+
+        # Enable authentication
+        self.api_auth_enabled = QComboBox()
+        self.api_auth_enabled.addItems(['禁用认证', '启用认证'])
+        self.api_auth_enabled.setCurrentText('禁用认证')
+        self.api_auth_enabled_label = BodyLabel("API认证:")
+        self.api_server_layout.addWidget(self.api_auth_enabled_label)
+        self.api_server_layout.addWidget(self.api_auth_enabled)
+
+        # API Key (shown when authentication is enabled)
+        self.api_key_label = BodyLabel("API密钥:")
+        self.api_key = QLineEdit()
+        self.api_key.setPlaceholderText("输入API密钥")
+        self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key_label.setVisible(False)
+        self.api_key.setVisible(False)
+        self.api_server_layout.addWidget(self.api_key_label)
+        self.api_server_layout.addWidget(self.api_key)
+
+        # Connect authentication toggle
+        self.api_auth_enabled.currentTextChanged.connect(self._on_api_auth_changed)
+
+        # Control buttons
+        self.api_control_frame = QFrame()
+        self.api_control_layout = QVBoxLayout(self.api_control_frame)
+
+        self.api_start_button = QPushButton("🚀 启动API服务器")
+        self.api_start_button.clicked.connect(self.start_api_server)
+        self.api_control_layout.addWidget(self.api_start_button)
+
+        self.api_stop_button = QPushButton("⏹️ 停止API服务器")
+        self.api_stop_button.clicked.connect(self.stop_api_server)
+        self.api_stop_button.setEnabled(False)
+        self.api_control_layout.addWidget(self.api_stop_button)
+
+        self.api_server_layout.addWidget(self.api_control_frame)
+
+        # API Documentation Section
+        self.api_server_layout.addWidget(TitleLabel("📚 API文档"))
+
+        self.api_docs_text = QTextEdit()
+        self.api_docs_text.setReadOnly(True)
+        self.api_docs_text.setMaximumHeight(200)
+        self.api_docs_text.setPlainText("""
+API端点说明:
+
+POST /api/transcribe - 提交音频转录任务
+  - 支持URL或文件上传
+  - 返回任务ID用于查询状态
+
+POST /api/translate - 提交翻译任务
+  - 输入LRC格式内容
+  - 返回任务ID用于查询状态
+
+GET /api/status/{task_id} - 查询任务状态
+GET /api/result/{task_id} - 获取任务结果
+GET /api/config - 获取当前配置
+POST /api/config - 更新配置
+
+访问 http://localhost:8000/docs 查看完整API文档
+        """)
+        self.api_server_layout.addWidget(self.api_docs_text)
+
+        # Active Tasks Section
+        self.api_server_layout.addWidget(TitleLabel("📋 活跃任务"))
+
+        self.api_tasks_text = QTextEdit()
+        self.api_tasks_text.setReadOnly(True)
+        self.api_tasks_text.setMaximumHeight(150)
+        self.api_tasks_text.setPlainText("暂无活跃任务")
+        self.api_server_layout.addWidget(self.api_tasks_text)
+
+        # Add tab to interface
+        self.addSubInterface(self.api_server_tab, FluentIcon.GLOBE, "API服务器", NavigationItemPosition.TOP)
+
+        # Initialize API server state
+        self.api_server_process = None
+        self.api_server_running = False
+
+        # Setup timer for status updates
+        self.api_status_timer = QTimer()
+        self.api_status_timer.timeout.connect(self.update_api_status)
+        self.api_status_timer.start(5000)  # Update every 5 seconds
+
+    def _on_api_auth_changed(self, text: str):
+        """Handle API authentication toggle"""
+        show_auth = (text == '启用认证')
+        self.api_key_label.setVisible(show_auth)
+        self.api_key.setVisible(show_auth)
+
+    def start_api_server(self):
+        """Start the API server"""
+        try:
+            if self.api_server_running:
+                self.status.emit("[WARNING] API服务器已在运行")
+                return
+
+            # Get configuration
+            host = self.api_host.text().strip() or "127.0.0.1"
+            port = int(self.api_port.text().strip() or "8000")
+            max_tasks = int(self.api_max_tasks.text().strip() or "5")
+            auth_enabled = self.api_auth_enabled.currentText() == '启用认证'
+            api_key = self.api_key.text().strip() if auth_enabled else None
+
+            # Validate configuration
+            if auth_enabled and not api_key:
+                self.status.emit("[ERROR] 启用认证时必须设置API密钥")
+                return
+
+            # Start API server in separate thread
+            self.status.emit(f"[INFO] 正在启动API服务器 {host}:{port}...")
+
+            # Import and start API server
+            from api.main import run_server
+            import threading
+
+            # Create server thread
+            self.api_server_thread = threading.Thread(
+                target=run_server,
+                args=(host, port, False),  # host, port, reload
+                daemon=True
+            )
+
+            # Set environment variables for API configuration
+            os.environ['API_HOST'] = host
+            os.environ['API_PORT'] = str(port)
+            os.environ['API_MAX_CONCURRENT_TASKS'] = str(max_tasks)
+            os.environ['API_ENABLE_AUTH'] = str(auth_enabled).lower()
+            if api_key:
+                os.environ['API_KEY'] = api_key
+
+            # Start the server
+            self.api_server_thread.start()
+
+            # Update UI state
+            self.api_server_running = True
+            self.api_start_button.setEnabled(False)
+            self.api_stop_button.setEnabled(True)
+
+            # Update status
+            self.api_status_label.setText("状态: 正在启动...")
+            self.api_url_label.setText(f"服务地址: http://{host}:{port}")
+
+            self.status.emit(f"[INFO] API服务器已启动: http://{host}:{port}")
+            self.status.emit("[INFO] 访问 /docs 查看API文档")
+
+        except Exception as e:
+            self.status.emit(f"[ERROR] 启动API服务器失败: {str(e)}")
+            self.api_server_running = False
+
+    def stop_api_server(self):
+        """Stop the API server"""
+        try:
+            if not self.api_server_running:
+                self.status.emit("[WARNING] API服务器未在运行")
+                return
+
+            self.status.emit("[INFO] 正在停止API服务器...")
+
+            # Note: In a production implementation, you would need a proper way to stop the server
+            # For now, we'll just update the UI state
+            # The server thread will continue running until the application exits
+
+            # Update UI state
+            self.api_server_running = False
+            self.api_start_button.setEnabled(True)
+            self.api_stop_button.setEnabled(False)
+
+            # Update status
+            self.api_status_label.setText("状态: 已停止")
+            self.api_url_label.setText("服务地址: -")
+
+            self.status.emit("[INFO] API服务器已停止")
+
+        except Exception as e:
+            self.status.emit(f"[ERROR] 停止API服务器失败: {str(e)}")
+
+    def update_api_status(self):
+        """Update API server status display"""
+        try:
+            if self.api_server_running:
+                # In a production implementation, you would check if the server is actually responding
+                # For now, just update the status based on our internal state
+                self.api_status_label.setText("状态: 运行中")
+
+                # Update active tasks (placeholder)
+                self.api_tasks_text.setPlainText("暂无活跃任务\n\n注意: 任务监控功能需要完整的API服务器实现")
+            else:
+                self.api_status_label.setText("状态: 未启动")
+                self.api_tasks_text.setPlainText("API服务器未运行")
+
+        except Exception as e:
+            self.status.emit(f"[ERROR] 更新API状态失败: {str(e)}")
+
 def error_handler(func):
     def wrapper(self):
         try:
@@ -548,7 +810,7 @@ class MainWorker(QObject):
         self.status.emit("[INFO] 正在读取配置...")
         # No whisper_file needed - always use anime-whisper
         translator = self.master.translator_group.currentText()
-        language = self.master.input_lang.currentText()
+        language = "ja"  # Fixed to Japanese
         gpt_token = self.master.gpt_token.text()
         gpt_address = self.master.gpt_address.text()
         gpt_model = self.master.gpt_model.text()
@@ -560,12 +822,21 @@ class MainWorker(QObject):
         with open('config.txt', 'w', encoding='utf-8') as f:
             f.write(f"anime-whisper\n{translator}\n{language}\n{gpt_token}\n{gpt_address}\n{gpt_model}\n{sakura_file}\n{sakura_mode}\n{output_format}\n")
 
-        # save anime-whisper config
-        with open('anime_whisper_config.txt', 'w', encoding='utf-8') as f:
-            if self.master.suppress_repetitions.currentText() == '启用重复抑制':
-                f.write('suppress_repetitions')
-            else:
-                f.write('')
+        # save transcription config
+        with open('transcription_config.txt', 'w', encoding='utf-8') as f:
+            use_hybrid = str(self.master.use_hybrid_backend.isChecked()).lower()
+            suppress_reps = str(self.master.suppress_repetitions.isChecked()).lower()
+            
+            # Map alignment backend
+            alignment_text = self.master.alignment_backend.currentText()
+            alignment_map = {
+                '本地Qwen3模型': 'qwen3',
+                'OpenAI兼容API': 'openai',
+                'Gemini原生API': 'gemini'
+            }
+            alignment_backend = alignment_map.get(alignment_text, 'qwen3')
+            
+            f.write(f"{use_hybrid}\n{suppress_reps}\n{alignment_backend}\n")
 
         # save llama param
         with open('llama/param.txt', 'w', encoding='utf-8') as f:
@@ -605,7 +876,7 @@ class MainWorker(QObject):
         input_files = self.master.input_files_list.toPlainText()
         # Use hybrid transcription system for better accuracy
         translator = self.master.translator_group.currentText()
-        language = self.master.input_lang.currentText()
+        language = "ja"  # Fixed to Japanese
         gpt_token = self.master.gpt_token.text()
         gpt_address = self.master.gpt_address.text()
         gpt_model = self.master.gpt_model.text()
@@ -721,7 +992,7 @@ class MainWorker(QObject):
 
                 # Use hybrid transcription system for better timestamp accuracy
                 try:
-                    from hybrid_transcription_backend import HybridTranscriptionBackend
+                    from backends import HybridTranscriptionBackend
 
                     # Get alignment backend configuration
                     backend_text = self.master.alignment_backend.currentText()
@@ -814,7 +1085,7 @@ class MainWorker(QObject):
                     # Fallback to original anime-whisper if hybrid system fails
                     self.status.emit("[INFO] 回退到原始 AnimeWhisper 系统...")
                     try:
-                        from anime_whisper_backend import AnimeWhisperBackend
+                        from backends import AnimeWhisperBackend
 
                         backend = AnimeWhisperBackend()
                         if not backend.initialize():

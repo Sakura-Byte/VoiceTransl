@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  voicetransl-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    environment:
+      # Server Configuration
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_RELOAD=false
+      
+      # Security
+      - API_ENABLE_AUTH=false
+      # - API_KEY=your-secret-key-here
+      
+      # Rate Limiting
+      - API_RATE_LIMIT_REQUESTS=100
+      - API_RATE_LIMIT_WINDOW=3600
+      
+      # Task Management
+      - API_MAX_CONCURRENT_TASKS=5
+      - API_TASK_TIMEOUT=3600
+      
+      # File Handling
+      - API_MAX_FILE_SIZE=1073741824  # 1GiB
+      - API_TEMP_DIR=/tmp/voicetransl
+      
+      # Logging
+      - API_LOG_LEVEL=INFO
+      - API_LOG_FILE=/app/logs/api.log
+      
+      # GPU Support (uncomment if using GPU)
+      # - CUDA_VISIBLE_DEVICES=0
+    
+    volumes:
+      # Mount configuration files
+      - ./config:/app/config:ro
+      - ./project:/app/project:rw
+      
+      # Mount model directories
+      - ./whisper:/app/whisper:ro
+      - ./models:/app/models:ro
+      
+      # Mount logs directory
+      - ./logs:/app/logs:rw
+      
+      # Mount temporary files directory
+      - ./temp:/tmp/voicetransl:rw
+    
+    # Uncomment for GPU support
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Add a reverse proxy for production
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - voicetransl-api
+    restart: unless-stopped
+    profiles:
+      - production
+
+# Optional: Add monitoring stack
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-storage:/var/lib/grafana
+      - ./monitoring/grafana:/etc/grafana/provisioning:ro
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+volumes:
+  grafana-storage:
+
+networks:
+  default:
+    name: voicetransl-network

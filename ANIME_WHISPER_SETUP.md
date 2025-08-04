@@ -66,7 +66,7 @@ python download_model.py
 创建测试脚本 `test_anime_whisper.py`：
 
 ```python
-from anime_whisper_backend import AnimeWhisperBackend
+from backends import AnimeWhisperBackend
 import torch
 
 def test_installation():
@@ -144,7 +144,7 @@ export HF_DATASETS_OFFLINE=1
 
 ### 方法 2: 代码中设置
 
-在 `anime_whisper_backend.py` 中添加离线模式：
+在 `backends/anime_whisper_backend.py` 中添加离线模式：
 
 ```python
 import os
@@ -160,7 +160,7 @@ RuntimeError: CUDA out of memory
 ```
 
 **解决方案**:
-- 减少 batch_size（在 `anime_whisper_backend.py` 中修改）
+- 减少 batch_size（在 `backends/anime_whisper_backend.py` 中修改）
 - 使用 CPU 模式
 - 关闭其他占用 GPU 的程序
 
@@ -208,7 +208,7 @@ ffmpeg -i input.mp4 -ar 16000 -ac 1 output.wav
 
 ### 内存优化
 ```python
-# 在 anime_whisper_backend.py 中调整
+# 在 backends/anime_whisper_backend.py 中调整
 chunk_length_s=15.0  # 减少块长度
 batch_size=8         # 减少批处理大小
 ```

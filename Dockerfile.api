@@ -1,0 +1,49 @@
+# VoiceTransl API Dockerfile
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    git \
+    build-essential \
+    libmagic1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements-api.txt .
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements-api.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY api/ ./api/
+COPY GalTransl/ ./GalTransl/
+COPY *.py ./
+
+# Copy configuration files
+COPY config.txt ./
+COPY project/ ./project/
+
+# Create necessary directories
+RUN mkdir -p /app/logs /app/temp /app/whisper /app/models
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV API_HOST=0.0.0.0
+ENV API_PORT=8000
+ENV API_TEMP_DIR=/app/temp
+ENV API_LOG_FILE=/app/logs/api.log
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run the API server
+CMD ["python", "-m", "api.main"]

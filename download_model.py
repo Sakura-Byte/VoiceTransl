@@ -120,7 +120,7 @@ def test_model():
     logger.info("测试模型加载...")
     
     try:
-        from anime_whisper_backend import AnimeWhisperBackend
+        from backends import AnimeWhisperBackend
         
         backend = AnimeWhisperBackend()
         if backend.initialize():
