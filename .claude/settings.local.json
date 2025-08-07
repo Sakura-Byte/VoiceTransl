@@ -27,7 +27,8 @@
       "Bash(rm -f tailwind.config.js tailwind.config.js.bak)",
       "Bash(curl -s http://localhost:5175)",
       "Bash(curl:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(rm:*)"
     ],
     "deny": []
   }
