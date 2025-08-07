@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 import requests
 
-from api.core.config import get_gui_integration
+from api.core.config import get_config_integration
 from api.core.exceptions import TranscriptionError, FileProcessingError
 from api.models.base import TaskMetadata
 from api.models.transcription import LRCEntry
@@ -39,9 +39,9 @@ async def process_transcription_task(task) -> Dict[str, Any]:
         task.current_step = "Initializing transcription"
         
         # Get GUI integration
-        gui_integration = get_gui_integration()
-        if not gui_integration.is_initialized():
-            gui_integration.initialize()
+        config_integration = get_config_integration()
+        if not config_integration.is_initialized():
+            config_integration.initialize()
         
         # Prepare audio file
         task.progress = 20.0
@@ -55,8 +55,8 @@ async def process_transcription_task(task) -> Dict[str, Any]:
             task.current_step = "Initializing transcription backend"
             
             # Get transcription settings from GUI configuration
-            gui_config = gui_integration.load_gui_config()
-            transcription_config = gui_integration.get_transcription_config()
+            config = config_integration.load_config()
+            transcription_config = config_integration.get_transcription_config()
             
             backend_type = "hybrid" if transcription_config.get("use_hybrid_backend", True) else "anime-whisper"
             backend = await _get_transcription_backend(backend_type, transcription_config)
@@ -173,7 +173,7 @@ async def _prepare_audio_file(input_data: Dict[str, Any]) -> str:
 
 async def _get_transcription_backend(backend_type: str, transcription_config: Dict[str, Any]):
     """Get and configure transcription backend"""
-    gui_integration = get_gui_integration()
+    config_integration = get_config_integration()
     
     if backend_type == "hybrid":
         # Import and configure hybrid backend
@@ -196,7 +196,7 @@ async def _get_transcription_backend(backend_type: str, transcription_config: Di
         
     elif backend_type == "anime-whisper":
         # Get anime-whisper backend from GUI integration
-        backend = gui_integration.get_transcription_backend("anime-whisper")
+        backend = config_integration.get_transcription_backend("anime-whisper")
         if not backend:
             raise TranscriptionError("Anime-whisper backend not available")
         
@@ -212,8 +212,8 @@ async def _transcribe_audio(backend, audio_file_path: str, input_data: Dict[str,
     language = "ja"  # Always Japanese
     
     # Get transcription settings from GUI configuration
-    gui_integration = get_gui_integration()
-    transcription_config = gui_integration.get_transcription_config()
+    config_integration = get_config_integration()
+    transcription_config = config_integration.get_transcription_config()
     suppress_repetitions = transcription_config.get("suppress_repetitions", False)
     
     try:

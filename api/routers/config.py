@@ -9,7 +9,7 @@ from api.models.config import (
     ServerConfigResponse, TranscriptionConfigResponse, TranslationConfigResponse,
     ConfigUpdateRequest, ConfigUpdateResponse, SystemStatusResponse, HealthCheckResponse
 )
-from api.core.config import get_settings, get_config_bridge, get_gui_integration
+from api.core.config import get_settings, get_config_bridge, get_config_integration
 from api.core.exceptions import ConfigurationError
 
 router = APIRouter()
@@ -21,7 +21,7 @@ async def get_full_config():
     settings = get_settings()
     config_bridge = get_config_bridge()
     
-    gui_config = config_bridge.load_gui_config()
+    config = config_bridge.load_config()
     transcription_config = config_bridge.get_transcription_config()
     translation_config = config_bridge.get_translation_config()
     
@@ -37,7 +37,7 @@ async def get_full_config():
         },
         "transcription": transcription_config,
         "translation": translation_config,
-        "gui_integration": gui_config
+        "config": config
     }
 
 
@@ -51,7 +51,7 @@ async def update_config(request: ConfigUpdateRequest):
     try:
         # Update GUI configuration if provided
         if request.translation:
-            success = config_bridge.update_gui_config(request.translation)
+            success = config_bridge.update_config(request.translation)
             if success:
                 updated_sections.append("translation")
             else:
@@ -118,7 +118,7 @@ async def get_translation_config():
     
     # Import translator mappings
     try:
-        from app import TRANSLATOR_SUPPORTED, ONLINE_TRANSLATOR_MAPPING
+        from api.core.constants import TRANSLATOR_SUPPORTED, ONLINE_TRANSLATOR_MAPPING
         
         available_translators = {}
         for translator in TRANSLATOR_SUPPORTED:

@@ -4,24 +4,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-VoiceTransl is a comprehensive offline AI video subtitle generation and translation software that supports both GUI and REST API modes. It integrates multiple transcription and translation backends including local models (Whisper, Sakura, GalTransl) and online APIs (OpenAI, Gemini, DeepSeek, etc.).
+VoiceTransl is a comprehensive offline AI video subtitle generation and translation software with a web-based interface and REST API. It integrates multiple transcription and translation backends including local models (Whisper, Sakura, GalTransl) and online APIs (OpenAI, Gemini, DeepSeek, etc.).
 
 ## Development Commands
 
 ### Python Environment
 - **Install dependencies**: `pip install -r requirements.txt` or `uv sync`
 - **Install API dependencies**: `pip install -r requirements-api.txt`
-- **Run GUI application**: `python app.py`
+- **Run web interface**: `python start_web_interface.py`
 - **Run API server**: `python -m api.main`
 
+### Frontend Development (voicetransl-ui/)
+- **Install dependencies**: `npm install`
+- **Development server**: `npm run dev`
+- **Build production**: `npm run build`
+- **Preview production**: `npm run preview`
+- **Type checking**: `npm run type-check`
+- **Linting**: `npm run lint` / `npm run lint:fix`
+- **Formatting**: `npm run format` / `npm run format:check`
+
 ### Testing
-- **Run tests**: `pytest tests/`
+- **Run Python tests**: `pytest tests/`
 - **Run API integration tests**: `python test_integration.py`
 - **Run tests with coverage**: `pytest --cov=api tests/`
+- **Run frontend tests**: `cd voicetransl-ui && npm run test`
+- **Run specific test suites**: `npm run test:components`, `npm run test:hooks`
+- **Run frontend tests with coverage**: `npm run test:coverage`
 
-### Building
-- **Build executable**: `pyinstaller app.spec`
-- **Separate UVR build**: `pyinstaller separate.py --onefile --distpath uvr`
 
 ### Docker Operations
 - **Build API container**: `docker-compose build voicetransl-api`
@@ -39,10 +48,13 @@ VoiceTransl is a comprehensive offline AI video subtitle generation and translat
 
 ### Core Components
 
-#### GUI Application (`app.py`)
-- **MainWindow**: PyQt6-based GUI with multiple tabs (main, settings, dictionary, API server)
-- **MainWorker**: Background thread handling transcription and translation tasks
-- **Configuration Management**: Loads/saves settings from `config.txt` and various config files
+#### Web Interface (`voicetransl-ui/`)
+- **React + TypeScript**: Modern web interface built with Vite, shadcn/ui components
+- **Real-time Updates**: WebSocket integration for live task progress and server status
+- **Responsive Design**: Mobile-friendly interface with dark/light theme support
+- **State Management**: Zustand for client state, React Query for server state
+- **Configuration Management**: Web-based configuration through API endpoints
+- **Testing**: Vitest with React Testing Library, MSW for API mocking
 
 #### API Server (`api/`)
 - **FastAPI Application**: REST API endpoints for transcription and translation
@@ -62,8 +74,10 @@ VoiceTransl is a comprehensive offline AI video subtitle generation and translat
 
 ### Key Directories
 
-- `api/`: REST API implementation
+- `api/`: REST API implementation (FastAPI server)
+- `voicetransl-ui/`: React frontend application (modern UI)
 - `GalTransl/`: Translation engine and backends
+- `backends/`: Transcription backend implementations (hybrid, whisper variants)
 - `llama/`: Local LLaMA models and executable
 - `project/`: Working directory with configs, cache, and I/O files
 - `whisper/`: Whisper model files
@@ -71,19 +85,23 @@ VoiceTransl is a comprehensive offline AI video subtitle generation and translat
 
 ### Configuration Files
 
-- `config.txt`: Main GUI configuration (translator, language, tokens, model settings)
+- `config.yaml` / `config.yaml.example`: Main YAML configuration (replaces config.txt)
 - `project/config.yaml`: GalTransl translation configuration
+- `voicetransl-ui/vite.config.ts`: Frontend build configuration
+- `voicetransl-ui/tailwind.config.js`: UI styling configuration
 - `anime_whisper_config.txt`: AnimeWhisper-specific settings
 - `llama/param.txt`: LLaMA.cpp command line parameters
 - `project/dict_*.txt`: Translation dictionaries (pre, gpt, after)
 - `project/extra_prompt.txt`: Additional translation prompts
+- `docker-compose.yml`: Container orchestration for production deployment
 
 ### Data Flow
 
 1. **Input Processing**: Audio/video files or URLs → transcription → SRT/LRC format
 2. **Translation Pipeline**: JSON format → GalTransl backend → translated JSON → final subtitle format
-3. **API Mode**: Async task creation → background processing → result retrieval via task ID
-4. **GUI Mode**: Real-time progress updates → file output to `project/cache/`
+3. **Web Interface**: React UI → API requests → async task creation → real-time progress via WebSocket
+4. **API Mode**: Direct REST API access for programmatic integration
+5. **Configuration Management**: YAML-based config system with migration from legacy config.txt
 
 ## Translation Integration
 
@@ -94,15 +112,36 @@ The project uses a modular translation system supporting:
 
 ## Testing Strategy
 
+### Backend Testing
 - **API Tests**: Comprehensive endpoint testing in `tests/test_api_endpoints.py`
 - **Integration Tests**: End-to-end workflow testing in `test_integration.py`
 - **Mock Services**: Use fixtures for testing without actual model dependencies
 - **Validation**: LRC format validation, task response validation helpers
 
+### Frontend Testing  
+- **Component Tests**: Vitest + React Testing Library for UI components
+- **Hook Tests**: Custom hooks testing with specialized test utilities
+- **Integration Tests**: End-to-end user workflows with MSW API mocking
+- **Coverage**: Minimum 70% coverage thresholds across all metrics
+- **Performance**: Bundle analysis and size monitoring
+
 ## Development Notes
 
-- **Dual Mode Architecture**: Single codebase supports both GUI and API modes
-- **Async Processing**: API uses FastAPI async/await patterns for task management
-- **PyQt6 Integration**: GUI uses modern PyQt6 with Fluent Design widgets
-- **Docker Support**: Production-ready containerization with monitoring stack
-- **Error Handling**: Comprehensive error handling with structured JSON responses in API mode
+### Architecture Principles
+- **Web-First Architecture**: Modern React frontend with FastAPI backend
+- **Async Processing**: FastAPI async/await patterns for task management
+- **Real-time Updates**: WebSocket integration for live progress monitoring  
+- **Type Safety**: Full TypeScript coverage in frontend, Pydantic models in backend
+- **Configuration Management**: YAML-based config system replacing legacy text files
+
+### Development Workflow
+- **Hot Reloading**: Vite dev server for frontend, uvicorn reload for API
+- **Code Quality**: ESLint/Prettier for frontend, proper Python typing for backend
+- **State Management**: Zustand for client state, React Query for server synchronization
+- **Error Boundaries**: Comprehensive error handling in both frontend and API
+- **Performance**: Code splitting, lazy loading, and bundle optimization
+
+### Deployment Options
+- **Development**: Separate frontend/backend servers with hot reload
+- **Production**: Docker Compose with nginx proxy and monitoring stack
+- **Standalone**: API-only mode for integration with external systems

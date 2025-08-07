@@ -1,11 +1,12 @@
 """
 API Configuration Management
-Handles API server settings and integration with GUI configuration
+Handles API server settings and configuration file management
 """
 
 import os
 from typing import List, Optional, Dict, Any
-from pydantic-settings import BaseSettings, Field
+from pydantic_settings import BaseSettings
+from pydantic import Field
 from functools import lru_cache
 
 
@@ -41,8 +42,8 @@ class APISettings(BaseSettings):
     log_level: str = Field(default="INFO", env="API_LOG_LEVEL")
     log_file: Optional[str] = Field(default=None, env="API_LOG_FILE")
     
-    # GUI integration
-    gui_config_path: str = Field(default="config.txt", env="GUI_CONFIG_PATH")
+    # Configuration integration
+    config_path: str = Field(default="config.txt", env="CONFIG_PATH")
     project_config_path: str = Field(default="project/config.yaml", env="PROJECT_CONFIG_PATH")
     
     class Config:
@@ -51,21 +52,21 @@ class APISettings(BaseSettings):
 
 
 class ConfigurationBridge:
-    """Bridge between GUI configuration and API settings"""
+    """Bridge between application configuration and API settings"""
     
     def __init__(self, settings: APISettings):
         self.settings = settings
-        self._gui_config: Optional[Dict[str, Any]] = None
+        self._config: Optional[Dict[str, Any]] = None
         self._project_config: Optional[Dict[str, Any]] = None
     
-    def load_gui_config(self) -> Dict[str, Any]:
-        """Load configuration from GUI config file"""
-        if not os.path.exists(self.settings.gui_config_path):
+    def load_config(self) -> Dict[str, Any]:
+        """Load configuration from main config file"""
+        if not os.path.exists(self.settings.config_path):
             return {}
         
         try:
             config = {}
-            with open(self.settings.gui_config_path, 'r', encoding='utf-8') as f:
+            with open(self.settings.config_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
                 if len(lines) >= 8:
                     config = {
@@ -79,11 +80,11 @@ class ConfigurationBridge:
                         'output_format': lines[8].strip() if len(lines) > 8 else 'lrc'
                     }
             
-            self._gui_config = config
+            self._config = config
             return config
             
         except Exception as e:
-            print(f"Error loading GUI config: {e}")
+            print(f"Error loading config: {e}")
             return {}
     
     def load_project_config(self) -> Dict[str, Any]:
@@ -105,7 +106,7 @@ class ConfigurationBridge:
     
     def get_transcription_config(self) -> Dict[str, Any]:
         """Get transcription configuration for API use"""
-        gui_config = self.load_gui_config()
+        config = self.load_config()
         project_config = self.load_project_config()
         
         # Load transcription-specific settings
@@ -113,7 +114,7 @@ class ConfigurationBridge:
         
         config = {
             'language': 'ja',  # Always Japanese
-            'output_format': gui_config.get('output_format', 'lrc'),
+            'output_format': config.get('output_format', 'lrc'),
             'project_config': project_config
         }
         
@@ -166,24 +167,24 @@ class ConfigurationBridge:
     
     def get_translation_config(self) -> Dict[str, Any]:
         """Get translation configuration for API use"""
-        gui_config = self.load_gui_config()
+        config = self.load_config()
         project_config = self.load_project_config()
         
         return {
-            'translator': gui_config.get('translator', '不进行翻译'),
-            'language': gui_config.get('language', 'ja'),
-            'gpt_token': gui_config.get('gpt_token', ''),
-            'gpt_address': gui_config.get('gpt_address', ''),
-            'gpt_model': gui_config.get('gpt_model', ''),
-            'sakura_file': gui_config.get('sakura_file', ''),
-            'sakura_mode': gui_config.get('sakura_mode', 0),
+            'translator': config.get('translator', '不进行翻译'),
+            'language': config.get('language', 'ja'),
+            'gpt_token': config.get('gpt_token', ''),
+            'gpt_address': config.get('gpt_address', ''),
+            'gpt_model': config.get('gpt_model', ''),
+            'sakura_file': config.get('sakura_file', ''),
+            'sakura_mode': config.get('sakura_mode', 0),
             'project_config': project_config
         }
     
-    def update_gui_config(self, updates: Dict[str, Any]) -> bool:
-        """Update GUI configuration file"""
+    def update_config(self, updates: Dict[str, Any]) -> bool:
+        """Update configuration file"""
         try:
-            current_config = self.load_gui_config()
+            current_config = self.load_config()
             current_config.update(updates)
             
             # Write back to config file
@@ -199,13 +200,13 @@ class ConfigurationBridge:
                 current_config.get('output_format', 'lrc')
             ]
             
-            with open(self.settings.gui_config_path, 'w', encoding='utf-8') as f:
+            with open(self.settings.config_path, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(lines))
             
             return True
             
         except Exception as e:
-            print(f"Error updating GUI config: {e}")
+            print(f"Error updating config: {e}")
             return False
 
 
@@ -221,8 +222,8 @@ def get_config_bridge() -> ConfigurationBridge:
     return ConfigurationBridge(get_settings())
 
 
-class GUIIntegration:
-    """Integration layer between API and GUI components"""
+class ConfigIntegration:
+    """Integration layer between API and application components"""
 
     def __init__(self, config_bridge: ConfigurationBridge):
         self.config_bridge = config_bridge
@@ -231,19 +232,19 @@ class GUIIntegration:
         self._initialized = False
 
     def initialize(self):
-        """Initialize GUI integration components"""
+        """Initialize application integration components"""
         if self._initialized:
             return
 
-        # Load current GUI configuration
-        gui_config = self.config_bridge.load_gui_config()
+        # Load current configuration
+        config = self.config_bridge.load_config()
         project_config = self.config_bridge.load_project_config()
 
-        # Initialize transcription backends based on GUI settings
+        # Initialize transcription backends based on configuration
         self._initialize_transcription_backends()
 
-        # Initialize translation backends based on GUI settings
-        self._initialize_translation_backends(gui_config, project_config)
+        # Initialize translation backends based on configuration
+        self._initialize_translation_backends(config, project_config)
 
         self._initialized = True
 
@@ -269,8 +270,8 @@ class GUIIntegration:
         except Exception as e:
             print(f"Error initializing transcription backends: {e}")
 
-    def _initialize_translation_backends(self, gui_config: dict, project_config: dict):
-        """Initialize translation backends based on GUI configuration"""
+    def _initialize_translation_backends(self, config: dict, project_config: dict):
+        """Initialize translation backends based on application configuration"""
         try:
             # Import GalTransl components
             from GalTransl.ConfigHelper import CProjectConfig
@@ -280,7 +281,7 @@ class GUIIntegration:
             if project_config and 'project' in project_config:
                 # Store reference to translation system
                 self._translation_backends['galtransl'] = {
-                    'gui_config': gui_config,
+                    'config': config,
                     'project_config': project_config
                 }
 
@@ -301,6 +302,6 @@ class GUIIntegration:
 
 
 @lru_cache()
-def get_gui_integration() -> GUIIntegration:
-    """Get cached GUI integration instance"""
-    return GUIIntegration(get_config_bridge())
+def get_config_integration() -> ConfigIntegration:
+    """Get cached configuration integration instance"""
+    return ConfigIntegration(get_config_bridge())

@@ -1,0 +1,143 @@
+# VoiceTransl Configuration File (YAML Format)
+# This is the new structured configuration format that replaces multiple .txt files
+# Copy this to config.yaml and customize for your setup
+
+_metadata:
+  created_at: "2024-08-04T12:00:00"
+  version: "2.0"
+  format: "yaml"
+
+# Transcription Settings
+transcription:
+  whisper_model: "anime-whisper"  # Options: anime-whisper, tiny-whisper, whisper-large
+  use_hybrid: true                # Use hybrid transcription (recommended)
+  suppress_repetitions: false     # Suppress repetitive transcriptions
+  alignment_backend: "qwen3"      # Options: qwen3, openai, gemini, local
+  language: "ja"                  # Source language (ja, en, zh, ko, etc.)
+
+# Translation Settings
+translation:
+  translator: "不进行翻译"        # Current translator selection
+  output_format: "中文SRT"        # Options: 中文SRT, 英文SRT, 中文LRC, 英文LRC, JSON, TXT
+  
+  # OpenAI Configuration
+  openai:
+    token: ""                     # Your OpenAI API key
+    base_url: "https://api.openai.com/v1"
+    model: "gpt-3.5-turbo"
+    max_tokens: 2000
+    temperature: 0.3
+  
+  # Google Gemini Configuration
+  gemini:
+    token: ""                     # Your Gemini API key
+    model: "gemini-pro"
+    temperature: 0.3
+  
+  # DeepSeek Configuration
+  deepseek:
+    token: ""                     # Your DeepSeek API key
+    base_url: "https://api.deepseek.com/v1"
+    model: "deepseek-chat"
+    max_tokens: 2000
+    temperature: 0.3
+  
+  # Sakura Local Model Configuration
+  sakura:
+    model_file: ""                # Path to Sakura model file
+    mode: 100                     # Sakura translation mode (1-200)
+    temperature: 0.1
+  
+  # Local LLaMA Configuration
+  local_llama:
+    model_path: ""                # Path to local LLaMA model
+    context_size: 4096
+    temperature: 0.7
+    top_p: 0.9
+    top_k: 40
+
+# Server Configuration
+server:
+  # API Server (for processing)
+  api:
+    host: "127.0.0.1"
+    port: 8000
+    max_concurrent_tasks: 4
+    request_timeout: 300
+  
+  # Web Interface Server (for management)
+  web:
+    host: "127.0.0.1"
+    port: 8080
+    debug: false
+
+# LLaMA Server Configuration
+llama:
+  executable_path: "llama/llama-server"
+  model_path: ""                  # Path to LLaMA model file
+  context_size: 4096
+  threads: 4                      # Number of CPU threads
+  gpu_layers: 0                   # Number of GPU layers (0 = CPU only)
+  server_port: 8081
+  additional_params: []           # Extra command line parameters
+
+# Translation Dictionaries
+dictionaries:
+  # Pre-translation dictionary (applied before AI translation)
+  pre_translation:
+    - source: "アニメ"
+      target: "动画"
+      enabled: true
+      case_sensitive: false
+      regex: false
+    - source: "マンガ"
+      target: "漫画"
+      enabled: true
+      case_sensitive: false
+      regex: false
+  
+  # GPT/AI translation dictionary (used during AI translation)
+  gpt_dictionary:
+    - source: "protagonist"
+      target: "主人公"
+      enabled: true
+      case_sensitive: false
+      regex: false
+  
+  # Post-translation dictionary (applied after AI translation)
+  post_translation:
+    - source: "动漫"
+      target: "动画"
+      enabled: true
+      case_sensitive: false
+      regex: false
+
+# Translation Prompts
+prompts:
+  # Additional prompt text for AI translation
+  extra_prompt: ""
+  
+  # System prompt for AI translation
+  system_prompt: "You are a professional translator specializing in anime and manga content. Translate naturally while preserving the original meaning and cultural context."
+
+# Logging Configuration
+logging:
+  level: "INFO"                   # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  file: "log.txt"
+  max_size_mb: 10                 # Maximum log file size before rotation
+  backup_count: 5                 # Number of backup log files to keep
+
+# Advanced Settings
+advanced:
+  cache_enabled: true             # Enable translation caching
+  cache_dir: "project/transl_cache"
+  temp_dir: "project/cache"
+  auto_backup: true               # Automatic configuration backups
+  backup_interval_hours: 24       # Hours between automatic backups
+
+# Configuration Notes:
+# 1. This file replaces the old config.txt, transcription_config.txt, and other text-based configs
+# 2. All paths can be relative or absolute
+# 3. API tokens should be kept secure - do not commit them to version control
+# 4. The migration utility can convert your existing .txt configs to this format
+# 5. Backups are automatically created when saving changes

@@ -1,0 +1,111 @@
+# Docker Compose Configuration for Staging Environment
+
+version: '3.8'
+
+services:
+  voicetransl-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      args:
+        BUILD_ENV: staging
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_RELOAD=false
+      - API_LOG_LEVEL=INFO
+      - API_ENABLE_AUTH=true
+      - API_RATE_LIMIT_REQUESTS=50
+      - API_RATE_LIMIT_WINDOW=3600
+      - API_MAX_CONCURRENT_TASKS=3
+    volumes:
+      - ./config:/app/config:ro
+      - ./project:/app/project:rw
+      - ./whisper:/app/whisper:ro
+      - ./models:/app/models:ro
+      - staging_logs:/app/logs
+      - staging_temp:/tmp/voicetransl
+    restart: unless-stopped
+    
+  voicetransl-ui:
+    build:
+      context: ./voicetransl-ui
+      dockerfile: Dockerfile
+      args:
+        NODE_ENV: production
+        VITE_API_BASE_URL: /api
+        VITE_WS_URL: /ws
+        VITE_APP_TITLE: "VoiceTransl [STAGING]"
+        VITE_APP_VERSION: "2.0.0-staging"
+        VITE_ENABLE_ANALYTICS: "false"
+        VITE_ENABLE_ERROR_REPORTING: "true"
+        VITE_ENABLE_PERFORMANCE_MONITORING: "true"
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+    
+  nginx-gateway:
+    image: nginx:alpine-slim
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx-gateway.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - staging_logs:/var/log/nginx
+    depends_on:
+      - voicetransl-api
+      - voicetransl-ui
+    restart: unless-stopped
+    environment:
+      - NGINX_ENVSUBST_TEMPLATE_DIR=/etc/nginx/templates
+      - NGINX_ENVSUBST_TEMPLATE_SUFFIX=.template
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Monitoring stack for staging
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus-staging.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_staging_data:/prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=staging_admin_2024
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana_staging_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+volumes:
+  staging_logs:
+  staging_temp:
+  prometheus_staging_data:
+  grafana_staging_data:
+
+networks:
+  default:
+    name: voicetransl-staging
+    driver: bridge

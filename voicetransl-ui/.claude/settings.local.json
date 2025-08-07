@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__browser__browser_navigate",
+      "mcp__browser__browser_screenshot",
+      "mcp__browser__browser_get_console_logs",
+      "Bash(npm run dev --verbose)",
+      "mcp__browser__browser_press_key",
+      "mcp__browser__browser_click",
+      "mcp__browser__browser_snapshot",
+      "Bash(npx tailwindcss --version)",
+      "Bash(nvm use 20)",
+      "Bash(node -e \"console.log(require(''./node_modules/tailwindcss/package.json'').version)\")",
+      "Bash(mv tailwind.config.js tailwind.config.js.bak)",
+      "Bash(ls:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npm run type-check:*)",
+      "Bash(npm run lint)",
+      "Bash(node:*)",
+      "mcp__browser__browser_wait"
+    ],
+    "deny": []
+  }
+}

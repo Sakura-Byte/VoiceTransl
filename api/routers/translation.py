@@ -105,9 +105,9 @@ async def get_supported_translators():
     config_bridge = get_config_bridge()
     translation_config = config_bridge.get_translation_config()
     
-    # Import translator mappings from main app
+    # Import translator mappings from constants
     try:
-        from app import TRANSLATOR_SUPPORTED, ONLINE_TRANSLATOR_MAPPING
+        from api.core.constants import TRANSLATOR_SUPPORTED, ONLINE_TRANSLATOR_MAPPING
         
         translators = {}
         for translator in TRANSLATOR_SUPPORTED:

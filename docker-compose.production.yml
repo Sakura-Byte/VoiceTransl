@@ -1,0 +1,254 @@
+# Docker Compose Configuration for Production Environment
+
+version: '3.8'
+
+services:
+  voicetransl-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      args:
+        BUILD_ENV: production
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_RELOAD=false
+      - API_LOG_LEVEL=WARNING
+      - API_ENABLE_AUTH=true
+      - API_RATE_LIMIT_REQUESTS=100
+      - API_RATE_LIMIT_WINDOW=3600
+      - API_MAX_CONCURRENT_TASKS=5
+      - API_TASK_TIMEOUT=3600
+      - API_MAX_FILE_SIZE=1073741824
+    volumes:
+      - ./config:/app/config:ro
+      - ./project:/app/project:rw
+      - ./whisper:/app/whisper:ro
+      - ./models:/app/models:ro
+      - production_logs:/app/logs
+      - production_temp:/tmp/voicetransl
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+  voicetransl-ui:
+    build:
+      context: ./voicetransl-ui
+      dockerfile: Dockerfile
+      args:
+        NODE_ENV: production
+        VITE_API_BASE_URL: /api
+        VITE_WS_URL: /ws
+        VITE_APP_TITLE: "VoiceTransl"
+        VITE_APP_VERSION: "2.0.0"
+        VITE_ENABLE_ANALYTICS: "true"
+        VITE_ENABLE_ERROR_REPORTING: "true"
+        VITE_ENABLE_PERFORMANCE_MONITORING: "true"
+        VITE_ENABLE_CSP: "true"
+    environment:
+      - NODE_ENV=production
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+    
+  nginx-gateway:
+    image: nginx:alpine-slim
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx-gateway.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - production_logs:/var/log/nginx
+    depends_on:
+      - voicetransl-api
+      - voicetransl-ui
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Production monitoring stack
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "127.0.0.1:9090:9090"  # Only accessible from localhost
+    volumes:
+      - ./monitoring/prometheus-production.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/rules:/etc/prometheus/rules:ro
+      - prometheus_production_data:/prometheus
+    restart: always
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "127.0.0.1:3001:3000"  # Only accessible from localhost
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD_FILE=/run/secrets/grafana_admin_password
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SECURITY_DISABLE_GRAVATAR=true
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel
+      - GF_SERVER_ROOT_URL=https://localhost/grafana/
+    volumes:
+      - grafana_production_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    secrets:
+      - grafana_admin_password
+    restart: always
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Log aggregation
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./monitoring/loki-production.yml:/etc/loki/local-config.yaml:ro
+      - loki_production_data:/loki
+    restart: always
+    command: -config.file=/etc/loki/local-config.yaml
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Log shipper
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - ./monitoring/promtail-production.yml:/etc/promtail/config.yml:ro
+      - production_logs:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+  # Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_production_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    restart: always
+    command: redis-server /usr/local/etc/redis/redis.conf
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
+volumes:
+  production_logs:
+  production_temp:
+  prometheus_production_data:
+  grafana_production_data:
+  loki_production_data:
+  redis_production_data:
+
+secrets:
+  grafana_admin_password:
+    file: ./secrets/grafana_admin_password
+
+networks:
+  default:
+    name: voicetransl-production
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16

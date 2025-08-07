@@ -1,0 +1,68 @@
+_metadata:
+  created_at: '2025-08-04T23:30:34.464942'
+  version: '2.0'
+  format: yaml
+transcription:
+  whisper_model: anime-whisper
+  use_hybrid: true
+  suppress_repetitions: false
+  alignment_backend: qwen3
+  language: ja
+translation:
+  translator: 不进行翻译
+  output_format: 中文SRT
+  openai:
+    token: ''
+    base_url: https://api.openai.com/v1
+    model: gpt-3.5-turbo
+  gemini:
+    token: ''
+    model: gemini-pro
+  deepseek:
+    token: ''
+    base_url: https://api.deepseek.com/v1
+    model: deepseek-chat
+  sakura:
+    model_file: ''
+    mode: 100
+  local_llama:
+    model_path: ''
+    context_size: 4096
+    temperature: 0.7
+server:
+  api:
+    host: 127.0.0.1
+    port: 8000
+    max_concurrent_tasks: 4
+    request_timeout: 300
+  web:
+    host: 127.0.0.1
+    port: 8080
+    debug: false
+llama:
+  executable_path: llama/llama-server
+  model_path: ''
+  context_size: 4096
+  threads: 4
+  gpu_layers: 0
+  server_port: 8081
+  additional_params: []
+dictionaries:
+  pre_translation: []
+  gpt_dictionary: []
+  post_translation: []
+prompts:
+  extra_prompt: ''
+  system_prompt: You are a professional translator specializing in anime and manga
+    content.
+logging:
+  level: INFO
+  file: log.txt
+  max_size_mb: 10
+  backup_count: 5
+advanced:
+  cache_enabled: true
+  cache_dir: project/transl_cache
+  temp_dir: project/cache
+  auto_backup: true
+  backup_interval_hours: 24

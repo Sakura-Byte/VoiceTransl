@@ -1,0 +1,55 @@
+# Docker Compose Override for Development
+# This file is automatically loaded by docker-compose and overrides settings for development
+
+version: '3.8'
+
+services:
+  voicetransl-api:
+    # Override for development - enable hot reloading
+    environment:
+      - API_RELOAD=true
+      - API_LOG_LEVEL=DEBUG
+      - API_ENABLE_AUTH=false
+    volumes:
+      # Mount source code for hot reloading in development
+      - ./api:/app/api:ro
+      - ./GalTransl:/app/GalTransl:ro
+    ports:
+      # Expose additional ports for debugging
+      - "8001:8000"  # Alternative port mapping
+    
+  voicetransl-ui:
+    # Development build with hot reload
+    build:
+      target: development
+      args:
+        NODE_ENV: development
+        VITE_API_BASE_URL: http://localhost:8000
+        VITE_WS_URL: ws://localhost:8000/ws
+        VITE_ENABLE_DEVTOOLS: "true"
+        VITE_SOURCEMAP: "true"
+    environment:
+      - NODE_ENV=development
+    volumes:
+      # Mount source for hot reloading
+      - ./voicetransl-ui/src:/app/src:ro
+      - ./voicetransl-ui/public:/app/public:ro
+      - ./voicetransl-ui/index.html:/app/index.html:ro
+    ports:
+      - "5175:5173"  # Vite dev server
+    command: npm run dev -- --host 0.0.0.0 --port 5173
+
+  # Development database (if needed in future)
+  # postgres-dev:
+  #   image: postgres:15-alpine
+  #   environment:
+  #     POSTGRES_DB: voicetransl_dev
+  #     POSTGRES_USER: dev_user
+  #     POSTGRES_PASSWORD: dev_password
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres_dev_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_dev_data:

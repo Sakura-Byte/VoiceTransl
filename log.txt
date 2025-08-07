@@ -1,0 +1,246 @@
+[OK] Found 14 translators, current: 不进行翻译
+    Available: ['不进行翻译', 'gpt-custom', 'sakura-009', 'sakura-010', 'galtransl', 'moonshot', 'glm', 'deepseek', 'minimax', 'doubao', 'aliyun', 'gemini', 'ollama', 'llamacpp']
+
+[TEST] Translation Configuration
+[OK] Translation config: 不进行翻译 -> zh-cn
+
+[TEST] Transcription Task Creation
+[ERROR] Transcription task exception: 'State' object has no attribute 'task_manager'
+Traceback (most recent call last):
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\datastructures.py", line 686, in __getattr__
+    return self._state[key]
+           ~~~~~~~~~~~^^^^^
+KeyError: 'task_manager'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\test_kikoeru_integration.py", line 108, in test_kikoeru_integration
+    response = client.post("/api/transcribe", json=test_data)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\testclient.py", line 552, in post
+    return super().post(
+           ^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\httpx\_client.py", line 1157, in post
+    return self.request(
+           ^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\testclient.py", line 451, in request
+    return super().request(
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\httpx\_client.py", line 837, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\httpx\_client.py", line 926, in send
+    response = self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\httpx\_client.py", line 954, in _send_handling_auth
+    response = self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\httpx\_client.py", line 991, in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\httpx\_client.py", line 1027, in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\testclient.py", line 354, in handle_request
+    raise exc
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\testclient.py", line 351, in handle_request
+    portal.call(self.app, scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\anyio\from_thread.py", line 290, in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\AppData\Roaming\uv\python\cpython-3.12.11-windows-x86_64-none\Lib\concurrent\futures\_base.py", line 456, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\AppData\Roaming\uv\python\cpython-3.12.11-windows-x86_64-none\Lib\concurrent\futures\_base.py", line 401, in __get_result
+    raise self._exception
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\anyio\from_thread.py", line 221, in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\fastapi\applications.py", line 1054, in __call__
+    await super().__call__(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\applications.py", line 113, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\middleware\errors.py", line 186, in __call__
+    raise exc
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\middleware\cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\routing.py", line 716, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\routing.py", line 736, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\routing.py", line 290, in handle
+    await self.app(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\routing.py", line 78, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\routing.py", line 75, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\fastapi\routing.py", line 292, in app
+    solved_result = await solve_dependencies(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\fastapi\dependencies\utils.py", line 640, in solve_dependencies
+    solved = await run_in_threadpool(call, **solved_result.values)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\concurrency.py", line 38, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\anyio\to_thread.py", line 56, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 2470, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 967, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\api\routers\transcription.py", line 19, in get_task_manager
+    return request.app.state.task_manager
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\datastructures.py", line 689, in __getattr__
+    raise AttributeError(message.format(self.__class__.__name__, key))
+AttributeError: 'State' object has no attribute 'task_manager'
+
+[TEST] Translation Task Creation
+[ERROR] Translation task exception: 'State' object has no attribute 'task_manager'
+Traceback (most recent call last):
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\datastructures.py", line 686, in __getattr__
+    return self._state[key]
+           ~~~~~~~~~~~^^^^^
+KeyError: 'task_manager'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\test_kikoeru_integration.py", line 146, in test_kikoeru_integration
+    response = client.post("/api/translate", json=test_data)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\testclient.py", line 552, in post
+    return super().post(
+           ^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\httpx\_client.py", line 1157, in post
+    return self.request(
+           ^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\testclient.py", line 451, in request
+    return super().request(
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\httpx\_client.py", line 837, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\httpx\_client.py", line 926, in send
+    response = self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\httpx\_client.py", line 954, in _send_handling_auth
+    response = self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\httpx\_client.py", line 991, in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\httpx\_client.py", line 1027, in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\testclient.py", line 354, in handle_request
+    raise exc
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\testclient.py", line 351, in handle_request
+    portal.call(self.app, scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\anyio\from_thread.py", line 290, in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\AppData\Roaming\uv\python\cpython-3.12.11-windows-x86_64-none\Lib\concurrent\futures\_base.py", line 456, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\AppData\Roaming\uv\python\cpython-3.12.11-windows-x86_64-none\Lib\concurrent\futures\_base.py", line 401, in __get_result
+    raise self._exception
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\anyio\from_thread.py", line 221, in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\fastapi\applications.py", line 1054, in __call__
+    await super().__call__(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\applications.py", line 113, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\middleware\errors.py", line 186, in __call__
+    raise exc
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\middleware\cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\routing.py", line 716, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\routing.py", line 736, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\routing.py", line 290, in handle
+    await self.app(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\routing.py", line 78, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\routing.py", line 75, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\fastapi\routing.py", line 292, in app
+    solved_result = await solve_dependencies(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\fastapi\dependencies\utils.py", line 640, in solve_dependencies
+    solved = await run_in_threadpool(call, **solved_result.values)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\concurrency.py", line 38, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\anyio\to_thread.py", line 56, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 2470, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 967, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\api\routers\translation.py", line 21, in get_task_manager
+    return request.app.state.task_manager
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\SakuraPY\Documents\GitHub\VoiceTransl\.venv\Lib\site-packages\starlette\datastructures.py", line 689, in __getattr__
+    raise AttributeError(message.format(self.__class__.__name__, key))
+AttributeError: 'State' object has no attribute 'task_manager'
+
+[TEST] Task Management
+[ERROR] Task management exception: 'State' object has no attribute 'task_manager'
+
+[TEST] File Upload Capability
+[ERROR] File upload exception: 'State' object has no attribute 'task_manager'
+
+============================================================
+[SUMMARY] KIKOERU INTEGRATION TEST RESULTS
+============================================================
+Health Check              : [PASSED]
+API Documentation         : [PASSED]
+Supported Translators     : [PASSED]
+Translation Config        : [PASSED]
+Transcription Task        : [FAILED]
+Translation Task          : [FAILED]
+Task Management           : [FAILED]
+File Upload               : [FAILED]
+
+Overall: 4/8 tests passed
+
+[PARTIAL] Partial compatibility (4/8 tests passed). Some Kikoeru features may not work.
+Review failed tests and address critical issues.
