@@ -269,30 +269,728 @@ export function useQueryWithErrorHandling<TData>(queryKey: string[], queryFn: ()
 }
 ```
 
-## Integration Analysis
+## Service-Separated Error Handling Architecture
 
-### 1. Backend Integration Status
+### Current Issue: Isolated Sophisticated Error Handling
 
-**FastAPI Application Integration** (`api/main.py`):
-```python
-# Current integration - Basic exception handlers
-@app.exception_handler(VoiceTranslException)
-async def voicetransl_exception_handler(request, exc: VoiceTranslException):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"error": exc.message, "detail": exc.detail}
-    )
+The codebase contains sophisticated error handling systems that exist but are not properly integrated with the main API. The advanced error handling, logging, monitoring, and recovery capabilities are implemented but confined to isolated modules, creating a disconnect between the HTTP layer and error processing business logic.
 
-# ❌ MISSING: Advanced ErrorHandler integration
-# The comprehensive ErrorHandler system exists but isn't used in main.py
-# Should use: return await ErrorHandler.handle_voicetransl_exception(request, exc)
+**Current Architecture Problem**:
+- Advanced `ErrorHandler` class exists but not integrated with FastAPI
+- Comprehensive error handling middleware implemented but not connected
+- Sophisticated logging and monitoring capabilities isolated from main application flow
+- Error processing business logic mixed with HTTP response formatting
 
-# ❌ MISSING: Error handling middleware
-# The error_handling_middleware exists but isn't added to the FastAPI app
-# Should add: app.add_middleware(BaseHTTPMiddleware, dispatch=error_handling_middleware)
+### Target Architecture: Service-Separated Error Handling
+
+**Proposed Service Structure**:
+```
+core/error_handling/
+├── error_handler.py         # Centralized error processing service
+├── error_logger.py          # Structured logging service  
+├── recovery_service.py      # Error recovery strategies service
+└── correlation_service.py   # Error correlation and tracking service
+
+core/monitoring/
+├── metrics_collector.py     # Performance metrics collection service
+├── health_monitor.py        # System health monitoring service
+├── alert_manager.py         # Alerting and notification service
+└── performance_tracker.py   # Cross-service performance tracking
+
+api/middleware/
+├── error_middleware.py      # HTTP error handling only (thin layer)
+└── logging_middleware.py    # HTTP request logging only (delegating)
 ```
 
-**Integration Gap**: The sophisticated backend error handling system is implemented but not fully integrated into the main FastAPI application.
+**Key Architectural Principles**:
+1. **Service Separation**: Error handling and monitoring as standalone services
+2. **Dependency Injection**: Services injected into API endpoints and other components
+3. **Clean Separation**: HTTP responses separated from error processing business logic
+4. **Cross-Service Usage**: Error handling services usable by API, WebSocket, and integration services
+
+### Service-Separated Error Handler
+
+**Centralized Error Processing Service** (`core/error_handling/error_handler.py`):
+```python
+from typing import Optional, Dict, Any, List
+import uuid
+from datetime import datetime
+from .correlation_service import CorrelationService
+from .error_logger import ErrorLogger
+from ..monitoring.metrics_collector import MetricsCollector
+
+class ErrorHandlerService:
+    """Centralized error processing service - separate from HTTP layer"""
+    
+    def __init__(
+        self,
+        logger: ErrorLogger,
+        correlation_service: CorrelationService,
+        metrics_collector: MetricsCollector
+    ):
+        self.logger = logger
+        self.correlation_service = correlation_service
+        self.metrics_collector = metrics_collector
+    
+    async def process_error(
+        self,
+        error: Exception,
+        context: Dict[str, Any],
+        correlation_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Process error with correlation ID and context tracking"""
+        
+        # Generate or use existing correlation ID
+        if not correlation_id:
+            correlation_id = self.correlation_service.generate_correlation_id()
+        
+        # Create error processing context
+        error_context = {
+            "correlation_id": correlation_id,
+            "error_type": type(error).__name__,
+            "timestamp": datetime.utcnow().isoformat(),
+            "service_context": context,
+            "error_message": str(error)
+        }
+        
+        # Classify and process error
+        error_classification = self._classify_error(error)
+        error_context.update(error_classification)
+        
+        # Log with correlation ID
+        await self.logger.log_error(error_context)
+        
+        # Track metrics
+        self.metrics_collector.record_error(
+            error_type=error_classification["category"],
+            severity=error_classification["severity"],
+            correlation_id=correlation_id
+        )
+        
+        # Store error correlation
+        await self.correlation_service.store_error_correlation(
+            correlation_id, error_context
+        )
+        
+        return {
+            "error_id": correlation_id,
+            "category": error_classification["category"],
+            "severity": error_classification["severity"],
+            "user_message": error_classification["user_message"],
+            "technical_details": error_classification.get("technical_details"),
+            "recovery_suggestions": error_classification.get("recovery_suggestions", [])
+        }
+    
+    def _classify_error(self, error: Exception) -> Dict[str, Any]:
+        """Classify error independent of HTTP context"""
+        if isinstance(error, VoiceTranslException):
+            return {
+                "category": "application_error",
+                "severity": "medium",
+                "user_message": error.message,
+                "technical_details": error.detail,
+                "http_status": error.status_code
+            }
+        elif isinstance(error, FileNotFoundError):
+            return {
+                "category": "file_error",
+                "severity": "high",
+                "user_message": "Required file not found",
+                "recovery_suggestions": ["Check file path", "Verify file permissions"]
+            }
+        # ... additional error classifications
+        
+        return {
+            "category": "system_error",
+            "severity": "critical",
+            "user_message": "An unexpected error occurred",
+            "technical_details": str(error)
+        }
+```
+
+**Error Correlation Service** (`core/error_handling/correlation_service.py`):
+```python
+class CorrelationService:
+    """Service for tracking error correlation across requests and services"""
+    
+    def __init__(self, redis_client=None):
+        self.redis_client = redis_client
+        self._correlation_store: Dict[str, Dict[str, Any]] = {}
+    
+    def generate_correlation_id(self) -> str:
+        """Generate unique correlation ID for error tracking"""
+        return f"err_{uuid.uuid4().hex[:12]}"
+    
+    async def store_error_correlation(
+        self,
+        correlation_id: str,
+        error_context: Dict[str, Any]
+    ):
+        """Store error correlation for cross-service tracking"""
+        correlation_data = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "error_context": error_context,
+            "related_requests": [],
+            "recovery_attempts": []
+        }
+        
+        if self.redis_client:
+            await self.redis_client.setex(
+                f"error_correlation:{correlation_id}",
+                3600,  # 1 hour TTL
+                json.dumps(correlation_data)
+            )
+        else:
+            self._correlation_store[correlation_id] = correlation_data
+    
+    async def get_error_correlation(self, correlation_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve error correlation data"""
+        if self.redis_client:
+            data = await self.redis_client.get(f"error_correlation:{correlation_id}")
+            return json.loads(data) if data else None
+        return self._correlation_store.get(correlation_id)
+    
+    async def link_related_errors(self, correlation_id: str, related_error_id: str):
+        """Link related errors across services"""
+        correlation_data = await self.get_error_correlation(correlation_id)
+        if correlation_data:
+            correlation_data["related_requests"].append({
+                "error_id": related_error_id,
+                "timestamp": datetime.utcnow().isoformat()
+            })
+            await self.store_error_correlation(correlation_id, correlation_data["error_context"])
+```
+
+### API Layer Integration (Thin HTTP Layer)
+
+**Thin Error Middleware** (`api/middleware/error_middleware.py`):
+```python
+from fastapi import Request, HTTPException
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class ErrorMiddleware(BaseHTTPMiddleware):
+    """Thin HTTP error handling - delegates to error handling service"""
+    
+    def __init__(self, app, error_handler_service: ErrorHandlerService):
+        super().__init__(app)
+        self.error_handler_service = error_handler_service
+    
+    async def dispatch(self, request: Request, call_next):
+        # Extract or generate correlation ID from request headers
+        correlation_id = request.headers.get("x-correlation-id")
+        
+        try:
+            response = await call_next(request)
+            
+            # Add correlation ID to successful responses
+            if correlation_id:
+                response.headers["x-correlation-id"] = correlation_id
+                
+            return response
+            
+        except Exception as error:
+            # Delegate to error handling service
+            error_result = await self.error_handler_service.process_error(
+                error=error,
+                context={
+                    "request_url": str(request.url),
+                    "request_method": request.method,
+                    "client_ip": request.client.host,
+                    "user_agent": request.headers.get("user-agent")
+                },
+                correlation_id=correlation_id
+            )
+            
+            # Return HTTP response based on error processing result
+            return self._create_http_response(error_result)
+    
+    def _create_http_response(self, error_result: Dict[str, Any]) -> JSONResponse:
+        """Convert error service result to HTTP response"""
+        status_code = error_result.get("http_status", 500)
+        
+        response_content = {
+            "error": {
+                "message": error_result["user_message"],
+                "error_id": error_result["error_id"],
+                "category": error_result["category"]
+            }
+        }
+        
+        # Include technical details only in development
+        if config.ENVIRONMENT == "development" and error_result.get("technical_details"):
+            response_content["error"]["details"] = error_result["technical_details"]
+        
+        # Include recovery suggestions
+        if error_result.get("recovery_suggestions"):
+            response_content["error"]["recovery_suggestions"] = error_result["recovery_suggestions"]
+        
+        return JSONResponse(
+            status_code=status_code,
+            content=response_content,
+            headers={"x-correlation-id": error_result["error_id"]}
+        )
+```
+
+### Structured Logging Service
+
+**Logging Service** (`core/error_handling/error_logger.py`):
+```python
+import structlog
+from typing import Dict, Any
+from datetime import datetime
+
+class ErrorLogger:
+    """Structured logging service for error handling across all services"""
+    
+    def __init__(self, service_name: str = "voicetransl"):
+        self.service_name = service_name
+        self.logger = structlog.get_logger(service_name)
+    
+    async def log_error(self, error_context: Dict[str, Any]):
+        """Log error with structured format and correlation ID"""
+        log_entry = {
+            "event": "error_occurred",
+            "service": self.service_name,
+            "timestamp": datetime.utcnow().isoformat(),
+            **error_context
+        }
+        
+        # Different log levels based on severity
+        severity = error_context.get("severity", "medium")
+        if severity == "critical":
+            self.logger.error("Critical error occurred", **log_entry)
+        elif severity == "high":
+            self.logger.error("High severity error", **log_entry)
+        elif severity == "medium":
+            self.logger.warning("Medium severity error", **log_entry)
+        else:
+            self.logger.info("Low severity error", **log_entry)
+    
+    async def log_error_recovery(
+        self,
+        correlation_id: str,
+        recovery_action: str,
+        success: bool,
+        details: Dict[str, Any] = None
+    ):
+        """Log error recovery attempts"""
+        log_entry = {
+            "event": "error_recovery_attempt",
+            "correlation_id": correlation_id,
+            "recovery_action": recovery_action,
+            "success": success,
+            "timestamp": datetime.utcnow().isoformat(),
+            "service": self.service_name
+        }
+        
+        if details:
+            log_entry.update(details)
+        
+        if success:
+            self.logger.info("Error recovery successful", **log_entry)
+        else:
+            self.logger.warning("Error recovery failed", **log_entry)
+    
+    async def log_cross_service_error(
+        self,
+        correlation_id: str,
+        source_service: str,
+        target_service: str,
+        error_context: Dict[str, Any]
+    ):
+        """Log errors that occur across service boundaries"""
+        log_entry = {
+            "event": "cross_service_error",
+            "correlation_id": correlation_id,
+            "source_service": source_service,
+            "target_service": target_service,
+            "timestamp": datetime.utcnow().isoformat(),
+            **error_context
+        }
+        
+        self.logger.error("Cross-service error", **log_entry)
+```
+
+### Monitoring Services Architecture
+
+**Performance Metrics Collection Service** (`core/monitoring/metrics_collector.py`):
+```python
+from typing import Dict, Any, Optional
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from collections import defaultdict, deque
+import asyncio
+
+@dataclass
+class ErrorMetric:
+    timestamp: datetime
+    error_type: str
+    severity: str
+    correlation_id: str
+    service_name: str
+    processing_time_ms: Optional[float] = None
+
+class MetricsCollector:
+    """Service for collecting performance and error metrics across all services"""
+    
+    def __init__(self, retention_hours: int = 24):
+        self.retention_hours = retention_hours
+        self.error_metrics: deque = deque()
+        self.performance_metrics: Dict[str, deque] = defaultdict(deque)
+        self.error_counts: Dict[str, int] = defaultdict(int)
+        self._cleanup_task = None
+    
+    async def start(self):
+        """Start background cleanup task"""
+        self._cleanup_task = asyncio.create_task(self._cleanup_old_metrics())
+    
+    def record_error(
+        self,
+        error_type: str,
+        severity: str,
+        correlation_id: str,
+        service_name: str = "voicetransl",
+        processing_time_ms: Optional[float] = None
+    ):
+        """Record error metric from any service"""
+        metric = ErrorMetric(
+            timestamp=datetime.utcnow(),
+            error_type=error_type,
+            severity=severity,
+            correlation_id=correlation_id,
+            service_name=service_name,
+            processing_time_ms=processing_time_ms
+        )
+        
+        self.error_metrics.append(metric)
+        self.error_counts[f"{service_name}:{error_type}"] += 1
+    
+    def record_performance_metric(
+        self,
+        service_name: str,
+        operation: str,
+        duration_ms: float,
+        success: bool = True
+    ):
+        """Record performance metric from any service"""
+        metric = {
+            "timestamp": datetime.utcnow(),
+            "service_name": service_name,
+            "operation": operation,
+            "duration_ms": duration_ms,
+            "success": success
+        }
+        
+        self.performance_metrics[f"{service_name}:{operation}"].append(metric)
+    
+    def get_error_rate(
+        self,
+        service_name: Optional[str] = None,
+        time_window_minutes: int = 60
+    ) -> Dict[str, float]:
+        """Calculate error rates across services"""
+        cutoff_time = datetime.utcnow() - timedelta(minutes=time_window_minutes)
+        
+        recent_errors = [
+            metric for metric in self.error_metrics
+            if metric.timestamp >= cutoff_time and
+            (not service_name or metric.service_name == service_name)
+        ]
+        
+        error_rates = {}
+        for metric in recent_errors:
+            key = f"{metric.service_name}:{metric.error_type}"
+            error_rates[key] = error_rates.get(key, 0) + 1
+        
+        return error_rates
+    
+    def get_performance_summary(
+        self,
+        service_name: Optional[str] = None,
+        time_window_minutes: int = 60
+    ) -> Dict[str, Dict[str, float]]:
+        """Get performance summary across services"""
+        cutoff_time = datetime.utcnow() - timedelta(minutes=time_window_minutes)
+        
+        performance_summary = {}
+        
+        for key, metrics_queue in self.performance_metrics.items():
+            service, operation = key.split(":", 1)
+            if service_name and service != service_name:
+                continue
+            
+            recent_metrics = [
+                metric for metric in metrics_queue
+                if metric["timestamp"] >= cutoff_time
+            ]
+            
+            if recent_metrics:
+                durations = [m["duration_ms"] for m in recent_metrics]
+                success_count = sum(1 for m in recent_metrics if m["success"])
+                
+                performance_summary[key] = {
+                    "avg_duration_ms": sum(durations) / len(durations),
+                    "min_duration_ms": min(durations),
+                    "max_duration_ms": max(durations),
+                    "success_rate": success_count / len(recent_metrics),
+                    "request_count": len(recent_metrics)
+                }
+        
+        return performance_summary
+    
+    async def _cleanup_old_metrics(self):
+        """Background task to clean up old metrics"""
+        while True:
+            try:
+                cutoff_time = datetime.utcnow() - timedelta(hours=self.retention_hours)
+                
+                # Clean error metrics
+                while (self.error_metrics and 
+                       self.error_metrics[0].timestamp < cutoff_time):
+                    self.error_metrics.popleft()
+                
+                # Clean performance metrics
+                for key, metrics_queue in self.performance_metrics.items():
+                    while (metrics_queue and 
+                           metrics_queue[0]["timestamp"] < cutoff_time):
+                        metrics_queue.popleft()
+                
+                await asyncio.sleep(3600)  # Run every hour
+                
+            except Exception as e:
+                # Log cleanup errors but don't stop the task
+                print(f"Metrics cleanup error: {e}")
+                await asyncio.sleep(3600)
+```
+
+**Health Monitoring Service** (`core/monitoring/health_monitor.py`):
+```python
+from typing import Dict, Any, List, Optional
+from enum import Enum
+from datetime import datetime, timedelta
+import asyncio
+
+class HealthStatus(Enum):
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    UNHEALTHY = "unhealthy"
+    UNKNOWN = "unknown"
+
+class HealthMonitor:
+    """Service for monitoring health across all application services"""
+    
+    def __init__(self, metrics_collector: MetricsCollector):
+        self.metrics_collector = metrics_collector
+        self.service_health: Dict[str, Dict[str, Any]] = {}
+        self.health_checks: Dict[str, callable] = {}
+        self._monitor_task = None
+    
+    async def start(self, check_interval_seconds: int = 60):
+        """Start continuous health monitoring"""
+        self._monitor_task = asyncio.create_task(
+            self._continuous_health_check(check_interval_seconds)
+        )
+    
+    def register_health_check(self, service_name: str, check_function: callable):
+        """Register health check function for a service"""
+        self.health_checks[service_name] = check_function
+    
+    async def check_service_health(self, service_name: str) -> Dict[str, Any]:
+        """Check health of a specific service"""
+        health_data = {
+            "service_name": service_name,
+            "timestamp": datetime.utcnow().isoformat(),
+            "status": HealthStatus.UNKNOWN.value,
+            "metrics": {},
+            "issues": []
+        }
+        
+        try:
+            # Run custom health check if available
+            if service_name in self.health_checks:
+                custom_health = await self.health_checks[service_name]()
+                health_data.update(custom_health)
+            
+            # Check error rates from metrics
+            error_rates = self.metrics_collector.get_error_rate(
+                service_name=service_name,
+                time_window_minutes=15
+            )
+            
+            # Check performance metrics
+            performance = self.metrics_collector.get_performance_summary(
+                service_name=service_name,
+                time_window_minutes=15
+            )
+            
+            health_data["metrics"] = {
+                "error_rates": error_rates,
+                "performance": performance
+            }
+            
+            # Determine health status based on metrics
+            health_data["status"] = self._determine_health_status(
+                error_rates, performance
+            ).value
+            
+        except Exception as e:
+            health_data["status"] = HealthStatus.UNHEALTHY.value
+            health_data["issues"].append(f"Health check failed: {str(e)}")
+        
+        self.service_health[service_name] = health_data
+        return health_data
+    
+    def _determine_health_status(
+        self,
+        error_rates: Dict[str, float],
+        performance: Dict[str, Dict[str, float]]
+    ) -> HealthStatus:
+        """Determine service health status based on metrics"""
+        
+        # Check error rates
+        total_errors = sum(error_rates.values())
+        if total_errors > 50:  # More than 50 errors in 15 minutes
+            return HealthStatus.UNHEALTHY
+        elif total_errors > 10:  # More than 10 errors in 15 minutes
+            return HealthStatus.DEGRADED
+        
+        # Check performance metrics
+        for operation, metrics in performance.items():
+            success_rate = metrics.get("success_rate", 1.0)
+            avg_duration = metrics.get("avg_duration_ms", 0)
+            
+            if success_rate < 0.8:  # Less than 80% success rate
+                return HealthStatus.UNHEALTHY
+            elif success_rate < 0.95 or avg_duration > 5000:  # Less than 95% or > 5s avg
+                return HealthStatus.DEGRADED
+        
+        return HealthStatus.HEALTHY
+    
+    async def get_overall_health(self) -> Dict[str, Any]:
+        """Get overall system health across all services"""
+        overall_health = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "overall_status": HealthStatus.HEALTHY.value,
+            "services": {},
+            "summary": {
+                "healthy_services": 0,
+                "degraded_services": 0,
+                "unhealthy_services": 0
+            }
+        }
+        
+        # Get health for all registered services
+        for service_name in self.health_checks.keys():
+            service_health = await self.check_service_health(service_name)
+            overall_health["services"][service_name] = service_health
+            
+            # Update summary counts
+            status = service_health["status"]
+            if status == HealthStatus.HEALTHY.value:
+                overall_health["summary"]["healthy_services"] += 1
+            elif status == HealthStatus.DEGRADED.value:
+                overall_health["summary"]["degraded_services"] += 1
+            elif status == HealthStatus.UNHEALTHY.value:
+                overall_health["summary"]["unhealthy_services"] += 1
+        
+        # Determine overall status
+        if overall_health["summary"]["unhealthy_services"] > 0:
+            overall_health["overall_status"] = HealthStatus.UNHEALTHY.value
+        elif overall_health["summary"]["degraded_services"] > 0:
+            overall_health["overall_status"] = HealthStatus.DEGRADED.value
+        
+        return overall_health
+    
+    async def _continuous_health_check(self, interval_seconds: int):
+        """Background task for continuous health monitoring"""
+        while True:
+            try:
+                await self.get_overall_health()
+                await asyncio.sleep(interval_seconds)
+            except Exception as e:
+                print(f"Health monitoring error: {e}")
+                await asyncio.sleep(interval_seconds)
+```
+
+### Service Integration Pattern
+
+**Service Injection in Business Services** (`api/services/transcription_service.py`):
+```python
+from core.error_handling.error_handler import ErrorHandlerService
+from core.monitoring.metrics_collector import MetricsCollector
+
+class TranscriptionService:
+    """Business service using injected error handling and monitoring services"""
+    
+    def __init__(
+        self,
+        error_handler: ErrorHandlerService,
+        metrics_collector: MetricsCollector
+    ):
+        self.error_handler = error_handler
+        self.metrics_collector = metrics_collector
+        self.service_name = "transcription_service"
+    
+    async def process_transcription(
+        self,
+        audio_data: bytes,
+        correlation_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        start_time = datetime.utcnow()
+        
+        try:
+            # Business logic for transcription
+            result = await self._perform_transcription(audio_data)
+            
+            # Record successful operation
+            processing_time = (datetime.utcnow() - start_time).total_seconds() * 1000
+            self.metrics_collector.record_performance_metric(
+                service_name=self.service_name,
+                operation="transcription",
+                duration_ms=processing_time,
+                success=True
+            )
+            
+            return {"success": True, "result": result}
+            
+        except Exception as error:
+            # Delegate error handling to service
+            error_result = await self.error_handler.process_error(
+                error=error,
+                context={
+                    "service": self.service_name,
+                    "operation": "transcription",
+                    "audio_size_bytes": len(audio_data) if audio_data else 0
+                },
+                correlation_id=correlation_id
+            )
+            
+            # Record failed operation
+            processing_time = (datetime.utcnow() - start_time).total_seconds() * 1000
+            self.metrics_collector.record_performance_metric(
+                service_name=self.service_name,
+                operation="transcription",
+                duration_ms=processing_time,
+                success=False
+            )
+            
+            # Raise business exception that can be handled by API layer
+            raise TranscriptionError(
+                message=error_result["user_message"],
+                detail=error_result.get("technical_details"),
+                correlation_id=error_result["error_id"]
+            )
+    
+    async def _perform_transcription(self, audio_data: bytes) -> str:
+        """Actual transcription logic"""
+        # ... transcription implementation
+        pass
+```
+
+### Integration Analysis
+
+### 1. Backend Integration Status
 
 ### 2. Frontend Integration Status
 

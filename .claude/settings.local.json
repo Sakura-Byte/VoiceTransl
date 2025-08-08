@@ -28,7 +28,8 @@
       "Bash(curl -s http://localhost:5175)",
       "Bash(curl:*)",
       "Bash(mkdir:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(find:*)"
     ],
     "deny": []
   }

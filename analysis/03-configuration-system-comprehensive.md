@@ -218,7 +218,321 @@ advanced:          # Advanced settings
 
 ---
 
-## 4. Fresh Design Approach
+## 4. API Layer Extraction Strategy
+
+### 4.1 Current Problems: Configuration Business Logic Mixed in API Layer
+
+The current implementation in `api/core/config.py` (400+ lines) suffers from severe architectural issues:
+
+#### Configuration Business Logic in API Layer
+```python
+# Current problematic implementation in api/core/config.py
+class ConfigurationBridge:
+    """Mixed API routing and business logic - PROBLEMATIC"""
+    
+    def __init__(self):
+        self.yaml_file = "config.yaml"  # File paths hardcoded
+        self.txt_file = "config.txt"   # Multiple formats handled
+        self.galtransl_config = "project/config.yaml"  # Scattered configs
+        
+    def get_configuration(self) -> dict:  # Business logic in API layer
+        """Complex configuration merging logic in wrong layer"""
+        yaml_config = self._read_yaml_config()
+        txt_config = self._read_txt_config() 
+        merged = self._merge_configurations(yaml_config, txt_config)
+        return self._validate_and_transform(merged)
+        
+    def save_configuration(self, config: dict):  # File I/O in API layer
+        """File operations and business logic mixed together"""
+        backup_path = self._create_backup()  # Backup logic
+        self._validate_config(config)        # Validation logic
+        self._save_to_yaml(config)          # File I/O logic
+        self._update_galtransl_config(config)  # Integration logic
+        self._restart_services_if_needed(config)  # Service management logic
+```
+
+#### Problems with Current Architecture:
+1. **Violation of Single Responsibility**: API layer handles HTTP requests AND business logic
+2. **Tight Coupling**: Configuration logic directly coupled to file system operations
+3. **Difficult Testing**: Cannot unit test configuration logic independently
+4. **No Dependency Injection**: Services hardcoded, cannot swap implementations
+5. **Mixed Concerns**: HTTP routing, validation, file I/O, and business logic all mixed
+
+### 4.2 Target Architecture: Clean Service Layer Separation
+
+#### Clean API Layer (HTTP Routing Only)
+```python
+# api/routers/config.py - THIN HTTP LAYER
+from fastapi import APIRouter, Depends, HTTPException
+from services.configuration.config_service import ConfigurationService
+from core.dependencies import get_config_service
+
+router = APIRouter(prefix="/api/config", tags=["configuration"])
+
+@router.get("/full")
+async def get_full_configuration(
+    config_service: ConfigurationService = Depends(get_config_service)
+) -> dict:
+    """Get complete configuration - THIN HTTP LAYER"""
+    try:
+        return await config_service.get_full_configuration()
+    except ConfigurationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/full")
+async def update_full_configuration(
+    config: dict,
+    config_service: ConfigurationService = Depends(get_config_service)
+) -> dict:
+    """Update complete configuration - DELEGATES TO SERVICE"""
+    try:
+        result = await config_service.update_full_configuration(config)
+        return {"success": True, "backup_path": result.backup_path}
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors())
+    except ConfigurationError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{domain}")
+async def get_domain_configuration(
+    domain: str,
+    config_service: ConfigurationService = Depends(get_config_service)
+) -> dict:
+    """Get domain-specific configuration - PURE HTTP ROUTING"""
+    try:
+        return await config_service.get_domain_configuration(domain)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=f"Domain not found: {domain}")
+```
+
+#### Configuration Service Layer (Business Logic Only)
+```python
+# services/configuration/config_service.py - PURE BUSINESS LOGIC
+from typing import Protocol, Dict, Any
+from core.storage.config_storage import ConfigStorageProtocol
+from services.configuration.validation_service import ValidationService
+from services.configuration.backup_service import BackupService
+
+class ConfigurationService:
+    """Pure business logic for configuration management"""
+    
+    def __init__(self,
+                 storage: ConfigStorageProtocol,
+                 validator: ValidationService,
+                 backup_service: BackupService,
+                 hot_reload_service: HotReloadService):
+        self._storage = storage  # Injected dependency
+        self._validator = validator
+        self._backup_service = backup_service
+        self._hot_reload_service = hot_reload_service
+        
+    async def get_full_configuration(self) -> Dict[str, Any]:
+        """Get complete configuration with validation"""
+        config = await self._storage.load_configuration()
+        validation_result = await self._validator.validate_full_config(config)
+        
+        if not validation_result.is_valid:
+            raise ConfigurationError(f"Invalid configuration: {validation_result.errors}")
+            
+        return config
+        
+    async def update_full_configuration(self, config: Dict[str, Any]) -> ConfigUpdateResult:
+        """Update configuration with backup and validation"""
+        # Validate new configuration
+        validation_result = await self._validator.validate_full_config(config)
+        if not validation_result.is_valid:
+            raise ValidationError(validation_result.errors)
+            
+        # Create backup before changes
+        backup_path = await self._backup_service.create_backup()
+        
+        try:
+            # Save configuration atomically
+            await self._storage.save_configuration(config)
+            
+            # Trigger hot reload if needed
+            affected_services = await self._determine_affected_services(config)
+            await self._hot_reload_service.reload_services(affected_services)
+            
+            return ConfigUpdateResult(success=True, backup_path=backup_path)
+            
+        except Exception as e:
+            # Rollback on failure
+            await self._backup_service.restore_backup(backup_path)
+            raise ConfigurationError(f"Failed to update configuration: {e}")
+            
+    async def get_domain_configuration(self, domain: str) -> Dict[str, Any]:
+        """Get domain-specific configuration"""
+        if domain not in self.SUPPORTED_DOMAINS:
+            raise ValueError(f"Unsupported domain: {domain}")
+            
+        full_config = await self.get_full_configuration()
+        return full_config.get(domain, {})
+```
+
+#### Storage Layer (File Operations Only)
+```python
+# core/storage/config_storage.py - PURE FILE OPERATIONS
+from typing import Protocol, Dict, Any
+from pathlib import Path
+from core.storage.yaml_handler import YamlHandler
+
+class ConfigStorageProtocol(Protocol):
+    """Interface for configuration storage"""
+    
+    async def load_configuration(self) -> Dict[str, Any]: ...
+    async def save_configuration(self, config: Dict[str, Any]) -> None: ...
+    async def backup_configuration(self) -> str: ...
+    async def restore_configuration(self, backup_path: str) -> None: ...
+
+class FileBasedConfigStorage:
+    """File-based configuration storage implementation"""
+    
+    def __init__(self, config_path: Path, yaml_handler: YamlHandler):
+        self._config_path = config_path
+        self._yaml_handler = yaml_handler  # Injected YAML handler
+        
+    async def load_configuration(self) -> Dict[str, Any]:
+        """Load configuration from file - PURE FILE OPERATION"""
+        if not self._config_path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {self._config_path}")
+            
+        return await self._yaml_handler.load_yaml(self._config_path)
+        
+    async def save_configuration(self, config: Dict[str, Any]) -> None:
+        """Save configuration atomically - PURE FILE OPERATION"""
+        temp_path = self._config_path.with_suffix('.tmp')
+        
+        try:
+            # Write to temporary file first
+            await self._yaml_handler.save_yaml(temp_path, config)
+            
+            # Atomic move to final location
+            temp_path.replace(self._config_path)
+            
+        except Exception as e:
+            # Cleanup temporary file on error
+            if temp_path.exists():
+                temp_path.unlink()
+            raise StorageError(f"Failed to save configuration: {e}")
+```
+
+### 4.3 Service Organization Structure
+
+```
+services/configuration/
+├── config_service.py        # Main configuration business logic
+├── validation_service.py    # Configuration validation rules
+├── migration_service.py     # Legacy config migration logic
+├── hot_reload_service.py    # Service reload coordination
+└── backup_service.py        # Configuration backup/restore
+
+core/storage/
+├── config_storage.py        # File-based config persistence interface
+├── yaml_handler.py          # YAML file operations
+└── backup_manager.py        # Backup file management
+
+integrations/galtransl/
+├── config_adapter.py        # GalTransl-specific config mapping
+└── backend_initializer.py   # Translation backend initialization
+
+api/routers/
+└── config.py                # HTTP endpoints only (thin layer)
+
+core/dependencies.py         # Dependency injection setup
+```
+
+### 4.4 Dependency Injection and Service Wiring
+
+#### Service Container Setup
+```python
+# core/dependencies.py - DEPENDENCY INJECTION
+from functools import lru_cache
+from services.configuration.config_service import ConfigurationService
+from services.configuration.validation_service import ValidationService
+from services.configuration.backup_service import BackupService
+from core.storage.config_storage import FileBasedConfigStorage
+from core.storage.yaml_handler import YamlHandler
+
+@lru_cache()
+def get_yaml_handler() -> YamlHandler:
+    """Get YAML handler singleton"""
+    return YamlHandler()
+
+@lru_cache()
+def get_config_storage() -> FileBasedConfigStorage:
+    """Get configuration storage implementation"""
+    config_path = Path("config.yaml")
+    yaml_handler = get_yaml_handler()
+    return FileBasedConfigStorage(config_path, yaml_handler)
+
+@lru_cache()
+def get_validation_service() -> ValidationService:
+    """Get validation service singleton"""
+    return ValidationService()
+
+@lru_cache()
+def get_backup_service() -> BackupService:
+    """Get backup service singleton"""
+    storage = get_config_storage()
+    return BackupService(storage)
+
+@lru_cache()
+def get_config_service() -> ConfigurationService:
+    """Get configuration service with all dependencies"""
+    storage = get_config_storage()
+    validator = get_validation_service()
+    backup_service = get_backup_service()
+    hot_reload_service = get_hot_reload_service()
+    
+    return ConfigurationService(
+        storage=storage,
+        validator=validator, 
+        backup_service=backup_service,
+        hot_reload_service=hot_reload_service
+    )
+```
+
+### 4.5 Integration Layer for Backend Systems
+
+#### GalTransl Integration Adapter
+```python
+# integrations/galtransl/config_adapter.py - INTEGRATION LOGIC
+from typing import Dict, Any
+from pathlib import Path
+
+class GalTranslConfigAdapter:
+    """Adapter for GalTransl configuration integration"""
+    
+    def __init__(self, galtransl_config_path: Path):
+        self._galtransl_config_path = galtransl_config_path
+        
+    async def sync_translation_config(self, main_config: Dict[str, Any]) -> None:
+        """Sync main configuration to GalTransl format"""
+        translation_config = main_config.get('translation', {})
+        
+        # Transform to GalTransl format
+        galtransl_config = self._transform_to_galtransl_format(translation_config)
+        
+        # Save to GalTransl config file
+        await self._save_galtransl_config(galtransl_config)
+        
+    def _transform_to_galtransl_format(self, translation_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Transform main config to GalTransl-specific format"""
+        return {
+            "translator": translation_config.get("translator", "gpt"),
+            "openai": {
+                "token": translation_config.get("openai", {}).get("token", ""),
+                "base_url": translation_config.get("openai", {}).get("base_url", ""),
+                "model": translation_config.get("openai", {}).get("model", "gpt-4")
+            },
+            # Additional GalTransl-specific mappings...
+        }
+```
+
+---
+
+## 5. Fresh Design Approach
 
 ### 4.1 Domain-Driven Configuration Architecture
 
@@ -440,25 +754,261 @@ POST /api/config/migrate
 - Validation: Validate migrated configuration
 ```
 
-### 5.2 Real-Time Configuration Updates
+### 5.2 Web-Configurable Hot-Reload System (Service-Based)
 
-#### WebSocket Configuration Events
+#### Hot-Reload Service (Separate from API)
 ```python
-class ConfigWebSocketHandler:
-    """Handle real-time configuration updates"""
+# services/configuration/hot_reload_service.py - SERVICE LAYER
+class HotReloadService:
+    """Manages service reloading independent of API layer"""
     
-    async def on_config_change(self, domain: str, changes: dict):
+    def __init__(self, websocket_service: WebSocketService):
+        self._websocket_service = websocket_service
+        self._service_managers = {}  # Registered service managers
+        self._file_watcher = ConfigFileWatcher()
+        
+    async def reload_services(self, affected_services: List[str]) -> None:
+        """Reload services after configuration changes"""
+        reload_results = {}
+        
+        for service_name in affected_services:
+            if service_name in self._service_managers:
+                try:
+                    manager = self._service_managers[service_name]
+                    await manager.reload_configuration()
+                    reload_results[service_name] = "success"
+                except Exception as e:
+                    reload_results[service_name] = f"error: {e}"
+                    
+        # Notify WebSocket clients (service-to-service communication)
+        await self._websocket_service.broadcast_reload_status(reload_results)
+        
+    def register_service_manager(self, service_name: str, manager: ServiceManager):
+        """Register service manager for hot reload"""
+        self._service_managers[service_name] = manager
+        
+    async def start_file_watching(self):
+        """Start watching configuration files for changes"""
+        await self._file_watcher.start_watching(self._on_file_change)
+        
+    async def _on_file_change(self, changed_file: str):
+        """Handle configuration file changes from file system"""
+        affected_services = self._determine_affected_services(changed_file)
+        await self.reload_services(affected_services)
+```
+
+#### WebSocket Service (Real-time Updates)
+```python
+# services/websocket/websocket_service.py - SEPARATE WEBSOCKET SERVICE
+class WebSocketService:
+    """WebSocket service for real-time updates (not in API layer)"""
+    
+    def __init__(self):
+        self._connections: Set[WebSocket] = set()
+        
+    async def broadcast_config_change(self, domain: str, changes: dict):
         """Broadcast configuration changes to connected clients"""
         
         message = {
             "type": "config_change",
-            "domain": domain, 
+            "domain": domain,
             "changes": changes,
-            "timestamp": datetime.utcnow().isoformat(),
-            "requires_restart": await self.check_restart_required(domain, changes)
+            "timestamp": datetime.utcnow().isoformat()
         }
         
-        await self.broadcast_to_clients(message)
+        await self._broadcast_to_all(message)
+        
+    async def broadcast_reload_status(self, reload_results: Dict[str, str]):
+        """Broadcast service reload status"""
+        
+        message = {
+            "type": "reload_status",
+            "services": reload_results,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        await self._broadcast_to_all(message)
+        
+    async def _broadcast_to_all(self, message: dict):
+        """Send message to all connected clients"""
+        disconnected = set()
+        
+        for websocket in self._connections:
+            try:
+                await websocket.send_json(message)
+            except ConnectionClosedOK:
+                disconnected.add(websocket)
+                
+        # Remove disconnected clients
+        self._connections -= disconnected
+```
+
+#### Service-to-Service Communication
+```python
+# services/configuration/config_service.py - UPDATED WITH SERVICE COMMUNICATION
+class ConfigurationService:
+    """Configuration service with clean service communication"""
+    
+    def __init__(self,
+                 storage: ConfigStorageProtocol,
+                 validator: ValidationService,
+                 backup_service: BackupService,
+                 hot_reload_service: HotReloadService,
+                 websocket_service: WebSocketService):
+        # ... existing initialization ...
+        self._websocket_service = websocket_service
+        
+    async def update_domain_configuration(self, domain: str, config: Dict[str, Any]) -> ConfigUpdateResult:
+        """Update domain configuration with service notifications"""
+        # ... validation and backup logic ...
+        
+        # Save configuration
+        await self._storage.save_domain_configuration(domain, config)
+        
+        # Notify WebSocket clients (service-to-service)
+        await self._websocket_service.broadcast_config_change(domain, config)
+        
+        # Trigger hot reload if needed
+        affected_services = await self._determine_affected_services({domain: config})
+        await self._hot_reload_service.reload_services(affected_services)
+        
+        return ConfigUpdateResult(success=True, affected_services=affected_services)
+```
+
+### 5.3 Clean Architecture Code Examples
+
+#### API Router Example (Minimal HTTP Handler)
+```python
+# api/routers/config.py - CLEAN HTTP LAYER
+@router.patch("/transcription")
+async def update_transcription_config(
+    transcription_config: TranscriptionConfigUpdate,
+    config_service: ConfigurationService = Depends(get_config_service)
+) -> ConfigUpdateResponse:
+    """Update transcription configuration - PURE HTTP ROUTING"""
+    
+    try:
+        # Delegate ALL business logic to service
+        result = await config_service.update_domain_configuration(
+            "transcription", 
+            transcription_config.dict(exclude_unset=True)
+        )
+        
+        # Return HTTP response format
+        return ConfigUpdateResponse(
+            success=result.success,
+            backup_path=result.backup_path,
+            affected_services=result.affected_services,
+            requires_restart=result.requires_restart
+        )
+        
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors())
+    except ConfigurationError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+```
+
+#### Configuration Service Example (Pure Business Logic)
+```python
+# services/configuration/config_service.py - PURE BUSINESS LOGIC
+class ConfigurationService:
+    """Pure business logic with no HTTP or file dependencies"""
+    
+    async def validate_translation_credentials(self, translation_config: Dict[str, Any]) -> ValidationResult:
+        """Validate translation API credentials - PURE BUSINESS LOGIC"""
+        
+        validation_results = []
+        translator = translation_config.get("translator")
+        
+        if translator == "openai":
+            openai_config = translation_config.get("openai", {})
+            result = await self._validate_openai_credentials(openai_config)
+            validation_results.append(result)
+            
+        elif translator == "gemini":
+            gemini_config = translation_config.get("gemini", {})
+            result = await self._validate_gemini_credentials(gemini_config)
+            validation_results.append(result)
+            
+        return ValidationResult.combine(validation_results)
+        
+    async def _validate_openai_credentials(self, openai_config: Dict[str, Any]) -> ValidationResult:
+        """Test OpenAI API connection - DELEGATES TO EXTERNAL SERVICE"""
+        
+        # Delegate to external API validation service
+        api_validator = self._external_api_validator
+        
+        try:
+            is_valid = await api_validator.test_openai_connection(
+                token=openai_config.get("token"),
+                base_url=openai_config.get("base_url"),
+                model=openai_config.get("model")
+            )
+            
+            return ValidationResult(
+                valid=is_valid,
+                field="translation.openai",
+                message="OpenAI API connection validated" if is_valid else "OpenAI API connection failed"
+            )
+            
+        except Exception as e:
+            return ValidationResult(
+                valid=False,
+                field="translation.openai",
+                message=f"OpenAI API validation error: {e}"
+            )
+```
+
+#### Testing Example (Independent Service Testing)
+```python
+# tests/services/test_configuration_service.py - CLEAN UNIT TESTING
+class TestConfigurationService:
+    """Test configuration service independently from API/files"""
+    
+    @pytest.fixture
+    def mock_storage(self):
+        """Mock storage for testing"""
+        storage = Mock(spec=ConfigStorageProtocol)
+        storage.load_configuration.return_value = {
+            "transcription": {"whisper_model": "base", "language": "en"},
+            "translation": {"translator": "openai"}
+        }
+        return storage
+        
+    @pytest.fixture
+    def config_service(self, mock_storage):
+        """Configuration service with mocked dependencies"""
+        validator = Mock(spec=ValidationService)
+        backup_service = Mock(spec=BackupService)
+        hot_reload_service = Mock(spec=HotReloadService)
+        websocket_service = Mock(spec=WebSocketService)
+        
+        return ConfigurationService(
+            storage=mock_storage,
+            validator=validator,
+            backup_service=backup_service,
+            hot_reload_service=hot_reload_service,
+            websocket_service=websocket_service
+        )
+        
+    async def test_update_transcription_config_triggers_reload(self, config_service):
+        """Test that transcription config updates trigger service reload"""
+        
+        # Setup
+        new_config = {"whisper_model": "large", "language": "ja"}
+        config_service._validator.validate_domain_config.return_value = ValidationResult(valid=True)
+        config_service._backup_service.create_backup.return_value = "backup_123.yaml"
+        
+        # Execute
+        result = await config_service.update_domain_configuration("transcription", new_config)
+        
+        # Verify business logic (no HTTP/file dependencies)
+        config_service._storage.save_domain_configuration.assert_called_once_with("transcription", new_config)
+        config_service._hot_reload_service.reload_services.assert_called_once()
+        config_service._websocket_service.broadcast_config_change.assert_called_once_with("transcription", new_config)
+        
+        assert result.success is True
+        assert result.backup_path == "backup_123.yaml"
 ```
 
 ---
@@ -637,7 +1187,187 @@ class ConfigFileWatcher:
 
 ---
 
-## 8. Migration Strategy
+## 8. Service Extraction Implementation Requirements
+
+### 8.1 Service Extraction Effort Estimates
+
+#### Phase 1: Core Service Extraction (2-3 weeks)
+- **Configuration Service Creation**: 5-7 days
+  - Extract business logic from `api/core/config.py`
+  - Create pure service classes with dependency injection
+  - Implement domain-specific configuration managers
+  
+- **Storage Layer Implementation**: 3-4 days
+  - Create file-based storage interface and implementation
+  - Implement atomic file operations
+  - Add YAML handler abstraction
+  
+- **Dependency Injection Setup**: 2-3 days
+  - Create service container and dependency wiring
+  - Update API endpoints to use injected services
+  - Implement service lifecycle management
+
+#### Phase 2: Advanced Services (2-3 weeks)
+- **Hot-Reload Service Development**: 4-5 days
+  - File watching implementation
+  - Service manager registration system
+  - Reload coordination logic
+  
+- **WebSocket Service Integration**: 3-4 days
+  - Extract WebSocket logic from API layer
+  - Implement service-to-service communication
+  - Real-time update broadcasting
+  
+- **Validation Service**: 3-4 days
+  - Extract validation logic from API endpoints
+  - Implement domain-specific validation rules
+  - External API credential testing
+
+#### Phase 3: Integration and Testing (1-2 weeks)
+- **Backend Integration Adapters**: 3-4 days
+  - GalTransl configuration adapter
+  - Translation backend initializer
+  - Service synchronization logic
+  
+- **Testing Infrastructure**: 3-4 days
+  - Service unit testing setup
+  - Mock service implementations
+  - Integration test updates
+
+### 8.2 File-Based Storage Implementation Needs
+
+#### Storage Interface Requirements
+```python
+# core/storage/config_storage.py - STORAGE INTERFACE
+class ConfigStorageProtocol(Protocol):
+    """Configuration storage interface"""
+    
+    async def load_configuration(self) -> Dict[str, Any]:
+        """Load complete configuration from storage"""
+        
+    async def load_domain_configuration(self, domain: str) -> Dict[str, Any]:
+        """Load domain-specific configuration"""
+        
+    async def save_configuration(self, config: Dict[str, Any]) -> None:
+        """Save complete configuration atomically"""
+        
+    async def save_domain_configuration(self, domain: str, config: Dict[str, Any]) -> None:
+        """Save domain-specific configuration"""
+        
+    async def backup_configuration(self) -> str:
+        """Create configuration backup and return backup path"""
+        
+    async def restore_configuration(self, backup_path: str) -> None:
+        """Restore configuration from backup"""
+        
+    async def list_backups(self) -> List[BackupMetadata]:
+        """List available configuration backups"""
+```
+
+#### Atomic File Operations
+```python
+# core/storage/yaml_handler.py - YAML FILE OPERATIONS
+class YamlHandler:
+    """Handles YAML file operations with atomic writes"""
+    
+    async def load_yaml(self, file_path: Path) -> Dict[str, Any]:
+        """Load YAML file with error handling"""
+        try:
+            async with aiofiles.open(file_path, 'r') as f:
+                content = await f.read()
+            return yaml.safe_load(content)
+        except yaml.YAMLError as e:
+            raise YamlParseError(f"Invalid YAML in {file_path}: {e}")
+        except FileNotFoundError:
+            raise ConfigFileNotFoundError(f"Configuration file not found: {file_path}")
+            
+    async def save_yaml(self, file_path: Path, data: Dict[str, Any]) -> None:
+        """Save YAML file atomically"""
+        temp_path = file_path.with_suffix('.tmp')
+        
+        try:
+            # Write to temporary file
+            yaml_content = yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
+            async with aiofiles.open(temp_path, 'w') as f:
+                await f.write(yaml_content)
+                
+            # Atomic move to final location
+            await self._atomic_move(temp_path, file_path)
+            
+        except Exception as e:
+            # Cleanup temp file on error
+            if temp_path.exists():
+                temp_path.unlink()
+            raise YamlSaveError(f"Failed to save YAML file {file_path}: {e}")
+```
+
+### 8.3 Hot-Reload Service Development Requirements
+
+#### Service Manager Interface
+```python
+# services/configuration/service_manager.py - SERVICE MANAGER INTERFACE
+class ServiceManager(Protocol):
+    """Interface for services that can be reloaded"""
+    
+    async def reload_configuration(self) -> None:
+        """Reload service with new configuration"""
+        
+    async def validate_configuration(self, config: Dict[str, Any]) -> ValidationResult:
+        """Validate configuration before reload"""
+        
+    def get_service_name(self) -> str:
+        """Get unique service name for identification"""
+```
+
+#### File Watching Implementation
+```python
+# services/configuration/file_watcher.py - FILE SYSTEM MONITORING
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+
+class ConfigFileWatcher:
+    """Watches configuration files for external changes"""
+    
+    def __init__(self):
+        self._observer = Observer()
+        self._handlers = {}
+        self._callback = None
+        
+    async def start_watching(self, callback: Callable[[str], Awaitable[None]]):
+        """Start watching configuration files"""
+        self._callback = callback
+        
+        # Watch main config directory
+        config_handler = ConfigFileHandler(callback)
+        self._observer.schedule(config_handler, path=".", recursive=False)
+        
+        # Watch project config directory  
+        project_handler = ConfigFileHandler(callback)
+        self._observer.schedule(project_handler, path="./project", recursive=False)
+        
+        self._observer.start()
+        
+    async def stop_watching(self):
+        """Stop file system monitoring"""
+        self._observer.stop()
+        self._observer.join()
+
+class ConfigFileHandler(FileSystemEventHandler):
+    """Handle configuration file change events"""
+    
+    def __init__(self, callback: Callable[[str], Awaitable[None]]):
+        self._callback = callback
+        
+    def on_modified(self, event):
+        """Handle file modification events"""
+        if not event.is_directory and event.src_path.endswith('.yaml'):
+            # Use asyncio to call async callback
+            asyncio.create_task(self._callback(event.src_path))
+```
+
+---
+
+## 9. Migration Strategy
 
 ### 8.1 Step-by-Step Migration Plan
 
@@ -665,7 +1395,77 @@ class ConfigFileWatcher:
 3. **Performance Monitoring**: Add configuration performance metrics
 4. **Testing and Validation**: Comprehensive testing of new system
 
-### 8.2 Backward Compatibility Strategy
+### 9.2 Step-by-Step Service Extraction Process
+
+#### Step 1: Create Service Interfaces and Base Classes
+```bash
+# Create service directory structure
+mkdir -p services/configuration
+mkdir -p core/storage 
+mkdir -p integrations/galtransl
+
+# Create interface files
+touch services/configuration/__init__.py
+touch services/configuration/config_service.py
+touch services/configuration/validation_service.py
+touch core/storage/config_storage.py
+touch core/dependencies.py
+```
+
+#### Step 2: Extract Configuration Business Logic
+```python
+# 1. Move business logic from api/core/config.py to services/configuration/config_service.py
+# 2. Create storage interface and implementation
+# 3. Update ConfigurationBridge to use new service
+
+# Before (in api/core/config.py):
+class ConfigurationBridge:
+    def get_configuration(self):
+        # 400+ lines of mixed concerns
+        pass
+        
+# After (in services/configuration/config_service.py):
+class ConfigurationService:
+    def __init__(self, storage: ConfigStorageProtocol):
+        self._storage = storage  # Dependency injection
+        
+    async def get_full_configuration(self):
+        # Pure business logic
+        pass
+```
+
+#### Step 3: Update API Endpoints to Use Services
+```python
+# Update api/routers/config.py to use dependency injection
+@router.get("/config/full")
+async def get_full_configuration(
+    config_service: ConfigurationService = Depends(get_config_service)  # Injected
+):
+    return await config_service.get_full_configuration()  # Delegate to service
+```
+
+#### Step 4: Implement File-Based Storage
+```python
+# Create core/storage/config_storage.py with FileBasedConfigStorage
+# Replace direct file access in services with storage interface
+# Implement atomic file operations and backup management
+```
+
+#### Step 5: Extract and Implement Service Communication
+```python
+# Move WebSocket logic from API to separate WebSocketService
+# Create HotReloadService for service coordination
+# Update configuration changes to trigger service communication
+```
+
+#### Step 6: Create Integration Adapters
+```python
+# Create integrations/galtransl/config_adapter.py
+# Extract GalTransl-specific logic from main configuration system
+# Implement backend initialization outside API layer
+```
+
+### 9.3 Backward Compatibility Strategy
 
 #### Legacy Support Bridge
 ```python
@@ -724,9 +1524,27 @@ class LegacyConfigBridge:
         return migration_result
 ```
 
+#### Testing Approach for Extracted Services
+```python
+# Test configuration service independently from HTTP and file systems
+class TestConfigurationService:
+    def test_service_with_mocked_dependencies(self):
+        # Mock all external dependencies
+        mock_storage = Mock(spec=ConfigStorageProtocol)
+        mock_validator = Mock(spec=ValidationService)
+        
+        # Test pure business logic
+        service = ConfigurationService(storage=mock_storage, validator=mock_validator)
+        result = await service.update_domain_configuration("transcription", {...})
+        
+        # Verify service interactions
+        mock_storage.save_domain_configuration.assert_called_once()
+        assert result.success is True
+```
+
 ---
 
-## 9. Testing Strategy
+## 10. Testing Strategy
 
 ### 9.1 Configuration Testing Architecture
 
@@ -804,7 +1622,121 @@ class ConfigPerformanceTests:
 
 ---
 
-## 10. Implementation Recommendations
+## 11. Updated Integration Examples
+
+### 11.1 GalTransl Integration (Service Layer)
+
+#### Translation Backend Integration (Outside API)
+```python
+# integrations/galtransl/backend_initializer.py - SEPARATE FROM API
+class GalTranslBackendInitializer:
+    """Initialize GalTransl backends based on configuration"""
+    
+    def __init__(self, config_adapter: GalTranslConfigAdapter):
+        self._config_adapter = config_adapter
+        self._initialized_backends = {}
+        
+    async def initialize_translator(self, translation_config: Dict[str, Any]) -> TranslatorBackend:
+        """Initialize translator backend from configuration - PURE INITIALIZATION LOGIC"""
+        
+        translator_type = translation_config.get("translator", "gpt")
+        
+        if translator_type == "openai":
+            return await self._initialize_openai_backend(translation_config)
+        elif translator_type == "gemini":
+            return await self._initialize_gemini_backend(translation_config)
+        elif translator_type == "sakura":
+            return await self._initialize_sakura_backend(translation_config)
+        else:
+            raise ValueError(f"Unsupported translator type: {translator_type}")
+            
+    async def reinitialize_on_config_change(self, new_translation_config: Dict[str, Any]):
+        """Reinitialize backends when configuration changes"""
+        
+        # Sync configuration to GalTransl format
+        await self._config_adapter.sync_translation_config(new_translation_config)
+        
+        # Reinitialize backend with new config
+        new_backend = await self.initialize_translator(new_translation_config)
+        
+        # Replace old backend
+        old_backend = self._initialized_backends.get("current")
+        if old_backend:
+            await old_backend.cleanup()
+            
+        self._initialized_backends["current"] = new_backend
+        
+        return new_backend
+```
+
+#### Configuration Validation in Service Layer
+```python
+# services/configuration/validation_service.py - VALIDATION OUTSIDE API
+class ValidationService:
+    """Configuration validation service"""
+    
+    def __init__(self, external_api_validator: ExternalApiValidator):
+        self._external_api_validator = external_api_validator
+        
+    async def validate_translation_config(self, translation_config: Dict[str, Any]) -> ValidationResult:
+        """Validate translation configuration - SERVICE LAYER VALIDATION"""
+        
+        errors = []
+        warnings = []
+        
+        # Schema validation
+        try:
+            TranslationConfig(**translation_config)  # Pydantic validation
+        except ValidationError as e:
+            errors.extend([f"Schema error: {error['msg']}" for error in e.errors()])
+            
+        # External API validation
+        translator = translation_config.get("translator")
+        if translator in ["openai", "gemini", "deepseek"]:
+            api_result = await self._validate_external_api(translator, translation_config)
+            if not api_result.valid:
+                errors.append(f"API validation failed: {api_result.message}")
+                
+        # Model file validation for local backends
+        if translator == "sakura":
+            model_file = translation_config.get("sakura", {}).get("model_file")
+            if model_file and not Path(model_file).exists():
+                errors.append(f"Sakura model file not found: {model_file}")
+                
+        return ValidationResult(
+            valid=len(errors) == 0,
+            errors=errors,
+            warnings=warnings
+        )
+        
+    async def _validate_external_api(self, translator: str, config: Dict[str, Any]) -> ValidationResult:
+        """Test external API connection - DELEGATES TO API VALIDATOR"""
+        
+        api_config = config.get(translator, {})
+        
+        try:
+            is_valid = await self._external_api_validator.test_connection(
+                translator_type=translator,
+                token=api_config.get("token"),
+                base_url=api_config.get("base_url"),
+                model=api_config.get("model")
+            )
+            
+            return ValidationResult(
+                valid=is_valid,
+                message=f"{translator} API connection successful" if is_valid else f"{translator} API connection failed"
+            )
+            
+        except Exception as e:
+            return ValidationResult(
+                valid=False,
+                message=f"{translator} API validation error: {e}"
+            )
+```
+
+---
+
+## 12. Implementation Recommendations
 
 ### 10.1 Immediate Actions (Next 2 Weeks)
 
